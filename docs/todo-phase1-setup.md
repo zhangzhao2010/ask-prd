@@ -94,13 +94,6 @@
       └── utils.ts
   ```
 
-- [ ] **初始化Git仓库**
-  ```bash
-  git init
-  git add .
-  git commit -m "chore: initial project structure"
-  ```
-
 ### 1.2 依赖安装和配置 (Day 1-2)
 
 #### 后端依赖
