@@ -1,0 +1,236 @@
+# ====================================
+# Python 相关
+# ====================================
+
+# 虚拟环境（7.5GB！务必忽略）
+venv/
+env/
+ENV/
+.venv/
+backend/venv/
+backend/env/
+
+# Python字节码
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 发布/打包
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+parts/
+bin/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# 测试和覆盖率
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ====================================
+# 数据库和数据文件
+# ====================================
+
+# SQLite数据库（不要提交数据库文件）
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# 数据目录和缓存（根据CLAUDE.md，/data/cache/是本地缓存）
+backend/data/
+data/
+/data/cache/
+*.cache
+
+# ====================================
+# 环境变量和敏感信息
+# ====================================
+
+# 环境变量文件（包含AWS凭证等敏感信息）
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+
+# 但保留示例文件
+!.env.example
+!.env.local.example
+
+# AWS凭证
+.aws/
+*.pem
+*.key
+
+# ====================================
+# Node.js / 前端相关
+# ====================================
+
+# 依赖（574MB！务必忽略）
+node_modules/
+frontend/node_modules/
+
+# Next.js构建产物
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# 前端构建和缓存
+/build
+.cache
+.parcel-cache
+
+# 日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ====================================
+# IDE 和编辑器
+# ====================================
+
+# VSCode（如果团队需要共享配置，删除这一行）
+.vscode/
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ====================================
+# 操作系统相关
+# ====================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+.directory
+.Trash-*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ====================================
+# 临时文件和文档
+# ====================================
+
+# 临时会话文档（看起来是开发过程的临时笔记）
+SESSION_HANDOFF.md
+PROJECT_NAME_FIX.md
+CONTINUE.md
+PHASE4_SUMMARY.md
+
+# PDF文件（如join_app_prd_v1.pdf可能是测试数据）
+# 如果这是重要需求文档，删除下面这行
+*.pdf
+
+# 临时文件
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+
+# ====================================
+# 日志和监控
+# ====================================
+
+# 应用日志
+logs/
+*.log
+log/
+*.log.*
+
+# ====================================
+# 云服务和部署
+# ====================================
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Docker
+*.log
+.dockerignore
+
+# ====================================
+# 其他
+# ====================================
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath
+*.sage.py
+
+# Rope项目设置
+.ropeproject
+
+# Spyder项目设置
+.spyderproject
+.spyproject
+
+# 压缩文件
+*.zip
+*.tar.gz
+*.rar

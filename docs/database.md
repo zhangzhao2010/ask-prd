@@ -1,4 +1,4 @@
-# AKS-PRD 数据库设计文档
+# ASK-PRD 数据库设计文档
 
 > 版本：v1.0
 > 更新时间：2025-01-20
@@ -99,8 +99,7 @@ CREATE TABLE documents (
     filename TEXT NOT NULL,                 -- 原始文件名，如 "PRD_登录_v1.2.pdf"
     s3_key TEXT NOT NULL,                   -- S3完整路径，如 "prds/product-a/PRD_登录_v1.2.pdf"
     s3_key_markdown TEXT,                   -- Markdown文件S3路径
-    local_markdown_path TEXT,               -- 本地Markdown缓存路径
-    local_images_dir TEXT,                  -- 本地图片目录路径
+    local_markdown_path TEXT,               -- 本地Markdown缓存路径（可选，可推导）
     file_size INTEGER,                      -- 文件大小（字节）
     page_count INTEGER,                     -- PDF页数
     status TEXT NOT NULL DEFAULT 'uploaded', -- uploaded | processing | completed | failed
@@ -117,14 +116,39 @@ CREATE INDEX idx_documents_filename ON documents(filename);
 ```
 
 **字段说明**：
-- `s3_key_markdown`: 转换后的Markdown文件路径，如 `prds/product-a/converted/PRD_登录_v1.2.md`
-- `local_markdown_path`: 本地缓存路径，如 `/data/cache/documents/doc-xxx/content.md`
-- `local_images_dir`: 本地图片目录，如 `/data/cache/documents/doc-xxx/images/`
+- `s3_key_markdown`: 转换后的Markdown文件S3路径（必须），如 `prds/product-a/converted/doc-xxx/content.md`
+- `local_markdown_path`: 本地Markdown缓存路径（可选），如 `/data/cache/documents/doc-xxx/content.md`
+  - 用于记录文件是否已缓存到本地
+  - 可为空，使用时可从`document_id`推导：`/data/cache/documents/{document_id}/content.md`
+  - 优先使用此字段检查缓存，为空则从S3下载
+- ~~`local_images_dir`~~: **已移除**（冗余字段）
+  - 原因：每个图片chunk已有完整的`image_s3_key`和`image_local_path`
+  - 图片目录可以从`document_id`推导：`/data/cache/documents/{document_id}/images/`
 - `status` 状态流转：
   - `uploaded`: 已上传到S3，未处理
   - `processing`: 正在处理（Marker转换中）
   - `completed`: 处理完成，已向量化
   - `failed`: 处理失败
+
+**路径推导规则**：
+```python
+# S3路径推导
+def get_s3_paths(kb_prefix: str, document_id: str):
+    return {
+        "markdown": f"{kb_prefix}/converted/{document_id}/content.md",
+        "images_dir": f"{kb_prefix}/converted/{document_id}/images/",
+        # 具体图片路径存储在chunks表
+    }
+
+# 本地缓存路径推导
+def get_local_paths(document_id: str):
+    base_dir = f"/data/cache/documents/{document_id}"
+    return {
+        "markdown": f"{base_dir}/content.md",
+        "images_dir": f"{base_dir}/images/",
+        # 具体图片路径存储在chunks表
+    }
+```
 
 **示例数据**：
 ```json
@@ -133,9 +157,8 @@ CREATE INDEX idx_documents_filename ON documents(filename);
     "kb_id": "kb-550e8400-e29b-41d4-a716-446655440000",
     "filename": "PRD_登录注册_v1.2.pdf",
     "s3_key": "prds/product-a/PRD_登录注册_v1.2.pdf",
-    "s3_key_markdown": "prds/product-a/converted/PRD_登录注册_v1.2/content.md",
+    "s3_key_markdown": "prds/product-a/converted/doc-660e8400/content.md",
     "local_markdown_path": "/data/cache/documents/doc-660e8400/content.md",
-    "local_images_dir": "/data/cache/documents/doc-660e8400/images/",
     "file_size": 2048576,
     "page_count": 15,
     "status": "completed",
@@ -143,6 +166,12 @@ CREATE INDEX idx_documents_filename ON documents(filename);
     "created_at": "2025-01-20T10:00:00Z",
     "updated_at": "2025-01-20T10:05:00Z"
 }
+```
+
+**注意**：
+- 图片相关路径不在documents表存储
+- S3图片路径格式：`prds/product-a/converted/doc-660e8400/images/img_001.png`（存储在chunks表）
+- 本地图片路径格式：`/data/cache/documents/doc-660e8400/images/img_001.png`（存储在chunks表）
 ```
 
 ---
@@ -165,8 +194,8 @@ CREATE TABLE chunks (
 
     -- 图片chunk字段
     image_filename TEXT,                    -- 图片文件名（仅图片chunk）
-    image_s3_key TEXT,                      -- 图片S3路径
-    image_local_path TEXT,                  -- 图片本地缓存路径
+    image_s3_key TEXT,                      -- 图片S3路径（持久化存储）
+    image_local_path TEXT,                  -- 图片本地缓存路径（可能不存在）
     image_description TEXT,                 -- Claude生成的图片描述
     image_type TEXT,                        -- flowchart | prototype | mindmap | screenshot | diagram | other
     image_width INTEGER,                    -- 图片宽度（像素）
@@ -192,6 +221,8 @@ CREATE INDEX idx_chunks_doc_index ON chunks(document_id, chunk_index);
 - `content_with_context`: 两种chunk都使用，图片chunk存储图片描述+上下文
 - `char_start/char_end`: 仅文本chunk使用，用于定位原文位置
 - `image_*`: 仅图片chunk使用
+- `image_s3_key`: 图片的S3持久化路径（必须），格式如 `prds/product-a/converted/doc-xxx/images/img_001.png`
+- `image_local_path`: 图片的本地缓存路径（可选），如果缓存不存在则从S3下载
 
 **示例数据 - 文本chunk**：
 ```json

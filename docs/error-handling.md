@@ -1,4 +1,4 @@
-# AKS-PRD 错误处理文档
+# ASK-PRD 错误处理文档
 
 > 版本：v1.0
 > 更新时间：2025-01-20
@@ -504,7 +504,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 ### 4.2 自定义异常类
 
 ```python
-class AKSPRDException(Exception):
+class ASKPRDException(Exception):
     """基础异常类"""
     def __init__(self, message, error_code, status_code=500, details=None):
         self.message = message
@@ -513,7 +513,7 @@ class AKSPRDException(Exception):
         self.details = details or {}
         super().__init__(message)
 
-class DocumentNotFoundException(AKSPRDException):
+class DocumentNotFoundException(ASKPRDException):
     """文档不存在异常"""
     def __init__(self, doc_id):
         super().__init__(
@@ -523,7 +523,7 @@ class DocumentNotFoundException(AKSPRDException):
             details={"document_id": doc_id}
         )
 
-class BedrockRateLimitError(AKSPRDException):
+class BedrockRateLimitError(ASKPRDException):
     """Bedrock限流异常"""
     def __init__(self):
         super().__init__(

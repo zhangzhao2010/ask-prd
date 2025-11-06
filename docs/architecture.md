@@ -1,4 +1,4 @@
-# AKS-PRD 架构设计文档
+# ASK-PRD 架构设计文档
 
 > 版本：v1.0
 > 更新时间：2025-01-20
@@ -9,7 +9,7 @@
 
 ### 1.1 整体架构
 
-AKS-PRD 采用前后端分离架构，主要分为两大子系统：
+ASK-PRD 采用前后端分离架构，主要分为两大子系统：
 
 1. **KnowledgeBase Builder**（知识库构建系统）
    - 负责PDF文档解析
@@ -52,14 +52,16 @@ AKS-PRD 采用前后端分离架构，主要分为两大子系统：
 ### 1.2 技术栈
 
 **前端**
-- Framework: Next.js 14
+- Framework: Next.js 16
 - UI Library: AWS Cloudscape Design System
 - 状态管理: React Hooks + Context
 - HTTP Client: Fetch API
 - SSE: EventSource
 
 **后端**
-- Framework: FastAPI (Python 3.11+)
+- Framework: FastAPI (Python 3.12)
+- Agent框架: Strands Agents SDK
+- Multi-Agent模式: 自定义Orchestration（基于Strands Agent）
 - 异步任务: Celery + Redis（或简化版：Threading + Queue）
 - ORM: SQLAlchemy
 - 数据验证: Pydantic
@@ -69,7 +71,10 @@ AKS-PRD 采用前后端分离架构，主要分为两大子系统：
 - 计算: AWS EC2 (带GPU，用于Marker)
 - 存储: AWS S3
 - 向量数据库: Amazon OpenSearch Serverless
-- AI服务: AWS Bedrock (Claude Sonnet, Embedding模型)
+- AI服务: AWS Bedrock (Claude Sonnet 4.5, Titan Embeddings V2)
+  - Region: us-west-2
+  - Model ID: global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  - 已配置所需权限
 - 元数据库: SQLite 3
 
 **第三方工具**
@@ -106,30 +111,38 @@ AKS-PRD 采用前后端分离架构，主要分为两大子系统：
 │    └─────────────┬───────────────────┘   │
 │                  ▼                        │
 │    ┌─────────────────────────────────┐   │
-│    │ 3.3 图片理解                    │   │
+│    │ 3.3 上传转换结果到S3            │   │
+│    │  - 上传Markdown文件到S3         │   │
+│    │  - 上传所有图片到S3             │   │
+│    │  - 记录S3路径到数据库           │   │
+│    │  - 同时缓存到本地               │   │
+│    └─────────────┬───────────────────┘   │
+│                  ▼                        │
+│    ┌─────────────────────────────────┐   │
+│    │ 3.4 图片理解                    │   │
 │    │  - 提取图片上下文               │   │
 │    │  - 调用Bedrock Claude生成描述   │   │
 │    │  - 创建图片chunk                │   │
 │    └─────────────┬───────────────────┘   │
 │                  ▼                        │
 │    ┌─────────────────────────────────┐   │
-│    │ 3.4 文本分块                    │   │
+│    │ 3.5 文本分块                    │   │
 │    │  - Markdown按语义分块           │   │
 │    │  - 包含图片描述的上下文         │   │
 │    │  - 创建文本chunk                │   │
 │    └─────────────┬───────────────────┘   │
 │                  ▼                        │
 │    ┌─────────────────────────────────┐   │
-│    │ 3.5 向量化                      │   │
+│    │ 3.6 向量化                      │   │
 │    │  - 调用Bedrock Embedding        │   │
 │    │  - 批量生成向量                 │   │
 │    └─────────────┬───────────────────┘   │
 │                  ▼                        │
 │    ┌─────────────────────────────────┐   │
-│    │ 3.6 存储                        │   │
+│    │ 3.7 存储                        │   │
 │    │  - 向量存入OpenSearch           │   │
 │    │  - 元数据存入SQLite             │   │
-│    │  - Markdown+图片缓存本地        │   │
+│    │  (Markdown+图片已在3.3上传S3)  │   │
 │    └─────────────────────────────────┘   │
 └──────────────────────────────────────────┘
        │
@@ -209,7 +222,7 @@ for i, chunk_text in enumerate(chunks):
     )
 ```
 
-### 2.2 检索问答流程（Agentic Robot）
+### 2.2 检索问答流程（Agentic Robot - 基于Strands Agent框架）
 
 ```
 ┌─────────────┐
@@ -218,7 +231,8 @@ for i, chunk_text in enumerate(chunks):
        │
        ▼
 ┌──────────────────────────────────┐
-│ 2. Query Rewrite (Bedrock)       │
+│ 2. Query Rewrite Agent           │
+│    使用Strands Agent + Tool      │
 │    原始: "登录方式的演进"         │
 │    重写: ["登录功能迭代历史"      │
 │          "认证方式变更记录"       │
@@ -244,118 +258,566 @@ for i, chunk_text in enumerate(chunks):
        ▼
 ┌──────────────────────────────────────────┐
 │ 5. Multi-Agent并发处理                   │
+│    使用Strands Swarm模式                 │
 │   ┌─────────────────────────────────┐    │
 │   │ Sub-Agent 1 (Document1)         │    │
-│   │  - 下载markdown+图片到本地      │    │
+│   │  Strands Agent实例              │    │
+│   │  - 使用Tool下载markdown+图片    │    │
 │   │  - 读取完整文档                 │    │
 │   │  - 提取与问题相关的信息         │    │
-│   │  - 标记引用的chunk              │    │
+│   │  - 返回structured output        │    │
 │   └─────────────────────────────────┘    │
 │   ┌─────────────────────────────────┐    │
 │   │ Sub-Agent 2 (Document2)         │    │
+│   │  独立的Strands Agent实例        │    │
 │   └─────────────────────────────────┘    │
 │   ┌─────────────────────────────────┐    │
 │   │ Sub-Agent 3 (Document3)         │    │
+│   │  独立的Strands Agent实例        │    │
 │   └─────────────────────────────────┘    │
 └──────┬───────────────────────────────────┘
        │
        ▼
 ┌──────────────────────────────────┐
 │ 6. Main Agent综合生成            │
+│    Strands Agent + Tools         │
 │    - 汇总sub-agent结果           │
-│    - 调用Bedrock生成最终答案     │
+│    - 使用BedrockModel流式生成    │
 │    - 合并引用列表                │
 └──────┬───────────────────────────┘
        │
        ▼
 ┌──────────────────────────────────┐
 │ 7. 流式输出                      │
+│    - Strands原生streaming支持    │
 │    - SSE推送答案片段             │
 │    - 推送引用信息                │
-│    - 推送Token统计               │
+│    - 自动收集Token统计           │
 └──────────────────────────────────┘
 ```
 
-#### 2.2.1 Sub-Agent处理逻辑
+#### 2.2.1 Sub-Agent处理逻辑（使用Strands Agent框架）
 
 ```python
-class SubAgent:
-    def process(self, document_id: str, query: str, relevant_chunks: List[Chunk]):
-        # 1. 获取文档内容（优先本地缓存）
-        markdown_path = get_cached_document(document_id)
-        if not markdown_path:
-            markdown_path = download_from_s3(document_id)
+from strands import Agent, tool
+from strands.models import BedrockModel
+from pydantic import BaseModel, Field
+from typing import List
 
-        # 2. 读取文档内容
-        markdown_content = read_file(markdown_path)
+# 定义Sub-Agent的输出结构
+class DocumentAnalysisResult(BaseModel):
+    """文档分析结果"""
+    answer: str = Field(description="针对用户问题的回答")
+    citations: List[dict] = Field(description="引用的具体段落或图片")
 
-        # 3. 加载相关图片
-        images = []
-        for chunk in relevant_chunks:
-            if chunk.chunk_type == 'image':
-                image_path = get_cached_image(chunk.image_filename)
-                images.append(image_path)
+# 定义Sub-Agent使用的工具
+@tool
+def get_document_content(document_id: str) -> dict:
+    """
+    获取文档内容（Markdown+图片）
 
-        # 4. 构建Prompt
-        prompt = f"""
-        你是一个专业的产品文档分析助手。请仔细阅读以下PRD文档，回答用户的问题。
+    Args:
+        document_id: 文档ID
 
-        用户问题：{query}
+    Returns:
+        包含markdown内容和图片路径列表的字典
+    """
+    # 1. 优先从本地缓存获取
+    markdown_path = get_cached_document(document_id)
+    if not markdown_path:
+        markdown_path = download_from_s3(document_id)
 
-        文档内容：
-        {markdown_content}
+    # 2. 读取文档内容
+    markdown_content = read_file(markdown_path)
 
-        重点关注的片段：
-        {format_relevant_chunks(relevant_chunks)}
+    # 3. 获取图片路径
+    images_dir = get_document_images_dir(document_id)
+    image_paths = list_files(images_dir)
 
-        请输出：
-        1. 针对用户问题的回答
-        2. 引用的具体段落或图片（使用chunk_id标识）
+    return {
+        "markdown_content": markdown_content,
+        "image_paths": image_paths
+    }
 
-        输出格式：
-        {{
-            "answer": "回答内容",
-            "citations": [
-                {{"chunk_id": "xxx", "reason": "引用原因"}},
-                ...
-            ]
-        }}
-        """
+@tool
+def read_image_file(image_path: str) -> bytes:
+    """
+    读取图片文件
 
-        # 5. 调用Bedrock（多模态输入）
-        response = bedrock_claude(
-            text=prompt,
-            images=images
+    Args:
+        image_path: 图片文件路径
+
+    Returns:
+        图片二进制数据
+    """
+    with open(image_path, 'rb') as f:
+        return f.read()
+
+# 创建Sub-Agent
+class DocumentSubAgent:
+    def __init__(self):
+        # 使用BedrockModel配置Sub-Agent
+        self.model = BedrockModel(
+            model_id="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            region_name="us-west-2",
+            temperature=0.3,
+            streaming=True,
         )
 
-        return response
+        # 创建Strands Agent，配置工具和系统提示词
+        self.agent = Agent(
+            model=self.model,
+            tools=[get_document_content, read_image_file],
+            system_prompt="""你是一个专业的产品文档分析助手。
+
+            你的任务是：
+            1. 使用get_document_content工具获取文档内容
+            2. 仔细阅读文档的Markdown文本
+            3. 如果需要，使用read_image_file工具查看图片
+            4. 针对用户问题提取相关信息
+            5. 标记引用的具体位置（chunk_id）
+
+            注意：
+            - 确保引用准确，每个引用必须对应实际存在的chunk
+            - 如果文档中没有相关信息，明确说明
+            - 优先引用原文，而不是自己编造
+            """
+        )
+
+    def process(self, document_id: str, query: str, relevant_chunks: List[dict]) -> dict:
+        """
+        处理单个文档
+
+        Args:
+            document_id: 文档ID
+            query: 用户问题
+            relevant_chunks: 检索到的相关chunk列表
+
+        Returns:
+            分析结果（包含答案和引用）
+        """
+        # 构建查询prompt，包含上下文信息
+        prompt = f"""
+        用户问题：{query}
+
+        文档ID：{document_id}
+
+        重点关注的片段：
+        {self._format_relevant_chunks(relevant_chunks)}
+
+        请使用get_document_content工具获取完整文档，然后回答用户问题。
+        """
+
+        # 使用structured_output确保输出格式
+        result = self.agent.structured_output(
+            DocumentAnalysisResult,
+            prompt
+        )
+
+        return {
+            "answer": result.answer,
+            "citations": result.citations
+        }
+
+    def _format_relevant_chunks(self, chunks: List[dict]) -> str:
+        """格式化相关chunk信息"""
+        formatted = []
+        for chunk in chunks:
+            if chunk['chunk_type'] == 'text':
+                formatted.append(f"[Chunk {chunk['chunk_id']}] {chunk['content'][:200]}...")
+            else:
+                formatted.append(f"[Image Chunk {chunk['chunk_id']}] {chunk['image_description']}")
+        return "\n\n".join(formatted)
 ```
 
-#### 2.2.2 Main Agent综合逻辑
+#### 2.2.2 Main Agent综合逻辑（使用Strands Agent框架）
 
 ```python
-class MainAgent:
-    def synthesize(self, query: str, sub_agent_results: List[dict]):
-        prompt = f"""
-        你是一个产品知识问答助手。现在有多个文档的分析结果，请综合回答用户的问题。
+from strands import Agent
+from strands.models import BedrockModel
+from typing import List, AsyncGenerator
+import asyncio
 
+class MainAgent:
+    def __init__(self):
+        # 使用BedrockModel配置Main Agent，启用流式输出
+        self.model = BedrockModel(
+            model_id="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            region_name="us-west-2",
+            temperature=0.7,
+            streaming=True,
+            max_tokens=4096,
+        )
+
+        # 创建Main Agent
+        self.agent = Agent(
+            model=self.model,
+            system_prompt="""你是一个产品知识问答助手。
+
+            你的任务是综合多个文档分析结果，生成完整、准确的回答。
+
+            要求：
+            1. 综合所有sub-agent的分析结果
+            2. 如果不同文档描述了演进历史，按时间顺序组织
+            3. 使用Markdown格式
+            4. 在相关段落后标注引用 [^1][^2]
+            5. 在回答末尾列出所有引用的详细信息
+            6. 如果信息不足，明确说明
+            """
+        )
+
+    async def synthesize_streaming(
+        self,
+        query: str,
+        sub_agent_results: List[dict]
+    ) -> AsyncGenerator[str, None]:
+        """
+        综合多个sub-agent结果，流式生成答案
+
+        Args:
+            query: 用户问题
+            sub_agent_results: 所有sub-agent的分析结果
+
+        Yields:
+            答案文本片段
+        """
+        # 构建综合prompt
+        prompt = f"""
         用户问题：{query}
 
         各文档的分析结果：
-        {format_sub_results(sub_agent_results)}
+        {self._format_sub_results(sub_agent_results)}
 
-        请综合以上信息，生成一个完整、准确、结构化的回答。
-        如果不同文档有演进关系，请按时间顺序组织答案。
-
-        输出要求：
-        1. 使用Markdown格式
-        2. 在相关段落后标注引用[^1][^2]
-        3. 在回答末尾列出所有引用的chunk_id
+        请综合以上信息，生成完整答案。
         """
 
-        # 流式生成
-        for chunk in bedrock_claude_stream(prompt):
-            yield chunk
+        # 使用Strands Agent的流式API
+        async for event in self.agent.stream_async(prompt):
+            # 处理不同类型的事件
+            if event.type == "text_delta":
+                # 文本增量事件
+                yield event.data
+            elif event.type == "tool_use":
+                # 如果agent需要使用工具（未来扩展）
+                pass
+            elif event.type == "complete":
+                # 完成事件，可以获取完整的metrics
+                self._save_metrics(event.metrics)
+
+    def synthesize(self, query: str, sub_agent_results: List[dict]) -> dict:
+        """
+        同步版本的综合方法（非流式）
+
+        Args:
+            query: 用户问题
+            sub_agent_results: 所有sub-agent的分析结果
+
+        Returns:
+            完整答案和引用信息
+        """
+        prompt = f"""
+        用户问题：{query}
+
+        各文档的分析结果：
+        {self._format_sub_results(sub_agent_results)}
+
+        请综合以上信息，生成完整答案。
+        """
+
+        # 使用Strands Agent调用（非流式）
+        result = self.agent(prompt)
+
+        # 提取引用信息
+        citations = self._extract_citations(sub_agent_results)
+
+        return {
+            "answer": result.text,
+            "citations": citations,
+            "metrics": {
+                "total_tokens": result.metrics.accumulated_usage.get("totalTokens", 0),
+                "prompt_tokens": result.metrics.accumulated_usage.get("inputTokens", 0),
+                "completion_tokens": result.metrics.accumulated_usage.get("outputTokens", 0),
+            }
+        }
+
+    def _format_sub_results(self, results: List[dict]) -> str:
+        """格式化sub-agent结果"""
+        formatted = []
+        for i, result in enumerate(results, 1):
+            formatted.append(f"""
+            === 文档 {i} ===
+            回答：{result['answer']}
+
+            引用：
+            {self._format_citations(result['citations'])}
+            """)
+        return "\n\n".join(formatted)
+
+    def _format_citations(self, citations: List[dict]) -> str:
+        """格式化引用信息"""
+        return "\n".join([
+            f"- [{c['chunk_id']}] {c.get('reason', '')}"
+            for c in citations
+        ])
+
+    def _extract_citations(self, results: List[dict]) -> List[dict]:
+        """从所有sub-agent结果中提取并合并引用"""
+        all_citations = []
+        for result in results:
+            all_citations.extend(result.get('citations', []))
+        # 去重
+        unique_citations = {c['chunk_id']: c for c in all_citations}
+        return list(unique_citations.values())
+
+    def _save_metrics(self, metrics):
+        """保存metrics到数据库（用于成本跟踪）"""
+        # TODO: 实现metrics存储
+        pass
+```
+
+#### 2.2.3 Multi-Agent Orchestration实现（使用Strands框架）
+
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from typing import List, Dict
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+class MultiAgentOrchestrator:
+    """
+    Multi-Agent协调器
+    负责协调Sub-Agent和Main-Agent的执行
+    """
+
+    def __init__(self, max_concurrent_agents: int = 5):
+        self.max_concurrent_agents = max_concurrent_agents
+        self.main_agent = MainAgent()
+
+    async def process_query(
+        self,
+        query: str,
+        documents_with_chunks: Dict[str, List[dict]]
+    ) -> dict:
+        """
+        处理用户查询的完整流程
+
+        Args:
+            query: 用户问题
+            documents_with_chunks: {document_id: [chunks]} 文档和相关chunk的映射
+
+        Returns:
+            包含答案、引用和metrics的结果
+        """
+        # 1. 并发执行所有Sub-Agent
+        sub_agent_results = await self._execute_sub_agents(
+            query,
+            documents_with_chunks
+        )
+
+        # 2. Main Agent综合生成答案（流式）
+        final_result = await self._synthesize_with_main_agent(
+            query,
+            sub_agent_results
+        )
+
+        return final_result
+
+    async def _execute_sub_agents(
+        self,
+        query: str,
+        documents_with_chunks: Dict[str, List[dict]]
+    ) -> List[dict]:
+        """
+        并发执行所有Sub-Agent
+
+        Args:
+            query: 用户问题
+            documents_with_chunks: 文档和chunk的映射
+
+        Returns:
+            所有Sub-Agent的结果列表
+        """
+        tasks = []
+
+        for document_id, chunks in documents_with_chunks.items():
+            # 为每个文档创建一个Sub-Agent任务
+            task = self._execute_single_sub_agent(
+                document_id,
+                query,
+                chunks
+            )
+            tasks.append(task)
+
+        # 使用asyncio.Semaphore限制并发数
+        semaphore = asyncio.Semaphore(self.max_concurrent_agents)
+
+        async def limited_task(task):
+            async with semaphore:
+                return await task
+
+        # 并发执行，但限制并发数
+        results = await asyncio.gather(
+            *[limited_task(task) for task in tasks],
+            return_exceptions=True
+        )
+
+        # 过滤掉失败的结果
+        successful_results = [
+            r for r in results
+            if not isinstance(r, Exception)
+        ]
+
+        return successful_results
+
+    async def _execute_single_sub_agent(
+        self,
+        document_id: str,
+        query: str,
+        chunks: List[dict]
+    ) -> dict:
+        """
+        执行单个Sub-Agent
+
+        Args:
+            document_id: 文档ID
+            query: 用户问题
+            chunks: 相关chunk列表
+
+        Returns:
+            Sub-Agent的分析结果
+        """
+        # 创建Sub-Agent实例
+        sub_agent = DocumentSubAgent()
+
+        # 在线程池中执行（因为Sub-Agent可能有同步操作）
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            result = await loop.run_in_executor(
+                executor,
+                sub_agent.process,
+                document_id,
+                query,
+                chunks
+            )
+
+        return {
+            "document_id": document_id,
+            "result": result
+        }
+
+    async def _synthesize_with_main_agent(
+        self,
+        query: str,
+        sub_agent_results: List[dict]
+    ) -> dict:
+        """
+        使用Main Agent综合所有Sub-Agent的结果
+
+        Args:
+            query: 用户问题
+            sub_agent_results: 所有Sub-Agent的结果
+
+        Returns:
+            最终答案和引用
+        """
+        # 提取所有sub-agent的结果
+        results = [r['result'] for r in sub_agent_results]
+
+        # 调用Main Agent综合
+        final_result = self.main_agent.synthesize(query, results)
+
+        return final_result
+
+    async def process_query_streaming(
+        self,
+        query: str,
+        documents_with_chunks: Dict[str, List[dict]]
+    ):
+        """
+        流式处理用户查询
+
+        Args:
+            query: 用户问题
+            documents_with_chunks: 文档和chunk的映射
+
+        Yields:
+            流式事件（文本片段、状态更新等）
+        """
+        # 1. 发送状态：开始处理sub-agents
+        yield {
+            "type": "status",
+            "message": f"正在分析 {len(documents_with_chunks)} 个文档..."
+        }
+
+        # 2. 并发执行Sub-Agents
+        sub_agent_results = await self._execute_sub_agents(
+            query,
+            documents_with_chunks
+        )
+
+        # 3. 发送状态：开始综合答案
+        yield {
+            "type": "status",
+            "message": "正在生成答案..."
+        }
+
+        # 4. 流式生成最终答案
+        results = [r['result'] for r in sub_agent_results]
+        async for text_chunk in self.main_agent.synthesize_streaming(query, results):
+            yield {
+                "type": "text_delta",
+                "text": text_chunk
+            }
+
+        # 5. 发送完成事件（包含引用和metrics）
+        citations = self.main_agent._extract_citations(results)
+        yield {
+            "type": "complete",
+            "citations": citations
+        }
+```
+
+**使用示例**：
+
+```python
+# 在FastAPI中使用Multi-Agent Orchestrator
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+
+app = FastAPI()
+orchestrator = MultiAgentOrchestrator(max_concurrent_agents=5)
+
+@app.post("/api/v1/query")
+async def query_streaming(request: QueryRequest):
+    """
+    流式问答API
+    """
+    # 1. Query Rewrite
+    rewritten_queries = await query_rewriter.rewrite(request.query)
+
+    # 2. Hybrid Search
+    search_results = hybrid_search(
+        index_name=f"kb_{request.kb_id}_index",
+        queries=rewritten_queries
+    )
+
+    # 3. 按文档聚合chunks
+    documents_with_chunks = group_chunks_by_document(search_results)
+
+    # 4. Multi-Agent处理
+    async def event_generator():
+        async for event in orchestrator.process_query_streaming(
+            request.query,
+            documents_with_chunks
+        ):
+            # 转换为SSE格式
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
 ```
 
 ### 2.3 Hybrid Search实现
@@ -420,19 +882,96 @@ def hybrid_search(index_name: str, queries: List[str], top_k: int = 20):
 ### 3.1 文档数据流
 
 ```
-PDF (S3)
+PDF (S3原始文件)
+  │ s3://bucket/prds/product-a/doc.pdf
   │
-  ├─→ 原始文件 (保留)
+  ├─→ 原始文件 (永久保留在S3)
   │
   └─→ Marker转换
        │
-       ├─→ Markdown文件 (S3 + 本地缓存)
+       ├─→ Markdown文件
+       │    ├─→ S3持久化存储: s3://bucket/prds/product-a/converted/doc-xxx/content.md
+       │    └─→ 本地缓存: /data/cache/documents/doc-xxx/content.md
        │
-       └─→ 图片文件 (S3 + 本地缓存)
+       └─→ 图片文件
+            ├─→ S3持久化存储: s3://bucket/prds/product-a/converted/doc-xxx/images/*.png
+            ├─→ 本地缓存: /data/cache/documents/doc-xxx/images/*.png
             │
-            ├─→ 图片Chunk (SQLite + OpenSearch向量)
+            ├─→ 图片Chunk (SQLite元数据 + OpenSearch向量 + S3图片文件)
+            │    - chunk.image_s3_key: S3路径 (必须)
+            │    - chunk.image_local_path: 本地缓存路径 (可选)
             │
-            └─→ 文本Chunk (SQLite + OpenSearch向量)
+            └─→ 文本Chunk (SQLite元数据 + OpenSearch向量)
+```
+
+**数据持久化策略**：
+- **S3**: 所有转换后的文件（Markdown + 图片）永久存储，作为唯一真实数据源
+- **本地缓存**: 加速访问，可以清理，丢失后可从S3恢复
+- **获取逻辑**: 先检查本地缓存 → 不存在则从S3下载 → 下载后更新本地缓存
+
+**S3路径规划**：
+```
+s3://your-bucket/
+├── prds/product-a/                    # S3 prefix (知识库配置)
+│   ├── doc1.pdf                       # 原始PDF
+│   ├── doc2.pdf
+│   └── converted/                     # 转换后的文件目录
+│       ├── doc-660e8400/              # 按document_id组织
+│       │   ├── content.md             # Markdown文件
+│       │   └── images/                # 图片目录
+│       │       ├── img_001.png
+│       │       ├── img_002.png
+│       │       └── img_003.png
+│       └── doc-770e8400/
+│           ├── content.md
+│           └── images/
+│               └── img_001.png
+```
+
+**文件获取逻辑伪代码**：
+```python
+def get_document_content(document_id: str) -> str:
+    """获取文档Markdown内容（优先本地缓存）"""
+    # 1. 检查本地缓存
+    local_path = f"/data/cache/documents/{document_id}/content.md"
+    if os.path.exists(local_path):
+        return read_file(local_path)
+
+    # 2. 从S3下载
+    doc = db.get_document(document_id)
+    s3_key = doc.s3_key_markdown  # 例如: prds/product-a/converted/doc-xxx/content.md
+    content = s3_client.download_file(s3_key)
+
+    # 3. 更新本地缓存
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    write_file(local_path, content)
+
+    # 4. 更新数据库记录
+    db.update_document(document_id, local_markdown_path=local_path)
+
+    return content
+
+def get_image_file(chunk_id: str) -> bytes:
+    """获取图片文件（优先本地缓存）"""
+    chunk = db.get_chunk(chunk_id)
+
+    # 1. 检查本地缓存
+    if chunk.image_local_path and os.path.exists(chunk.image_local_path):
+        return read_binary_file(chunk.image_local_path)
+
+    # 2. 从S3下载
+    image_data = s3_client.download_file(chunk.image_s3_key)
+
+    # 3. 更新本地缓存
+    local_path = f"/data/cache/documents/{chunk.document_id}/images/{chunk.image_filename}"
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    write_binary_file(local_path, image_data)
+
+    # 4. 更新数据库记录
+    db.update_chunk(chunk_id, image_local_path=local_path)
+
+    return image_data
+```
 ```
 
 ### 3.2 元数据流
@@ -489,6 +1028,25 @@ OpenSearch Serverless
 - 预留迁移到RDS的路径
 - 使用连接池和事务控制
 - 定期手动备份
+
+### 4.1.1 为什么转换结果要上传S3？
+
+**核心原因**：
+1. **数据持久化**：本地缓存可能被清理或丢失，S3是唯一可靠数据源
+2. **避免重复转换**：Marker转换耗时（需要GPU），转换一次永久保存
+3. **多实例支持**：将来多实例部署时，所有实例共享S3的转换结果
+4. **灾难恢复**：服务器故障时，可从S3完全恢复
+
+**成本考虑**：
+- S3存储成本很低（约$0.023/GB/月）
+- 相比重复运行Marker（GPU成本），S3存储更经济
+- 一次转换，永久受益
+
+**实现策略**：
+- Marker转换完成后**立即上传S3**
+- 同时缓存到本地（加速访问）
+- 本地缓存采用LRU策略，可以安全清理
+- 访问时优先本地缓存，缺失则从S3下载
 
 ### 4.2 为什么使用Multi-Agent而不是单次RAG？
 

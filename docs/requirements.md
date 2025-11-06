@@ -1,4 +1,4 @@
-# AKS-PRD 需求文档
+# ASK-PRD 需求文档
 
 > 版本：v1.0
 > 更新时间：2025-01-20
@@ -9,7 +9,7 @@
 
 ### 1.1 项目背景
 
-AKS-PRD 是一个为产品经理提供基于PRD（产品需求文档）的智能检索和问答系统。
+ASK-PRD 是一个为产品经理提供基于PRD（产品需求文档）的智能检索和问答系统。
 
 产品经理在日常工作中会积累大量的PRD文档（PDF格式），每个文档包含特定版本的需求迭代信息。文档通常为图文混排，包含：
 - 流程图
@@ -240,12 +240,16 @@ AKS-PRD 是一个为产品经理提供基于PRD（产品需求文档）的智能
 
 ### 5.1 技术约束
 
-- 前端：Next.js + AWS Cloudscape
-- 后端：Python + FastAPI
+- 前端：Next.js 16 + AWS Cloudscape
+- 后端：Python 3.12 + FastAPI
+- Agent框架：Strands Agents SDK（用于Multi-Agent实现）
 - 数据库：SQLite（本地）
 - 向量数据库：Amazon OpenSearch Serverless
 - 对象存储：Amazon S3
-- AI服务：AWS Bedrock
+- AI服务：AWS Bedrock（通过Strands BedrockModel集成）
+  - Region: us-west-2
+  - Model: Claude Sonnet 4.5 (global.anthropic.claude-sonnet-4-5-20250929-v1:0)
+  - 已配置所需权限
 - PDF转换：datalab-to/marker
 - 部署：单一EC2实例（带GPU）
 

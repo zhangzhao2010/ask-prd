@@ -1,4 +1,4 @@
-# AKS-PRD 开发任务清单
+# ASK-PRD 开发任务清单
 
 > 版本：v1.0
 > 更新时间：2025-01-20
@@ -8,65 +8,68 @@
 ## 项目里程碑
 
 ```
-Phase 1: 项目初始化和基础框架 (2周) ✅ 设计完成
+Phase 1: 项目初始化和基础框架 (2周) ✅ 已完成 (2025-11-04)
     ↓
-Phase 2: 知识库构建系统 (3周)
+Phase 2: 知识库构建系统 (3周) ✅ 已完成 (2025-11-05)
     ↓
-Phase 3: 检索问答系统 (3周)
+Phase 3: 检索问答系统 (3周) ✅ 已完成 (2025-11-05)
     ↓
-Phase 4: 前端开发 (2周)
+Phase 4: 前端开发 (2周) 🚧 进行中
     ↓
-Phase 5: 测试和优化 (1周)
+Phase 5: 测试和优化 (1周) 📋 待开始
 ```
 
-**预计总工期**: 11周
+**实际完成情况**:
+- Phase 1-3: 2天完成（高效开发）
+- **当前进度**: 60% 完成
+- **剩余工作**: 前端开发 + 测试优化
 
 ---
 
 ## 各阶段概览
 
-### Phase 1: 项目初始化和基础框架 (2周)
+### Phase 1: 项目初始化和基础框架 (2周) ✅
 
 **目标**: 搭建项目骨架，完成基础设施配置
 
 **关键产出**:
 - ✅ 项目文档完成
-- [ ] 项目目录结构创建
-- [ ] 数据库Schema实现
-- [ ] AWS服务配置
-- [ ] 基础API框架
+- ✅ 项目目录结构创建
+- ✅ 数据库Schema实现
+- ✅ AWS服务配置
+- ✅ 基础API框架
 
 **详细任务**: 见 [todo-phase1-setup.md](./todo-phase1-setup.md)
 
 ---
 
-### Phase 2: 知识库构建系统 (3周)
+### Phase 2: 知识库构建系统 (3周) ✅
 
 **目标**: 实现PDF上传、转换、向量化的完整流程
 
 **关键产出**:
-- [ ] 知识库管理API
-- [ ] 文档上传功能
-- [ ] PDF转Markdown（Marker集成）
-- [ ] 图片理解（Bedrock Claude）
-- [ ] 文本分块和向量化
-- [ ] 同步任务系统
+- ✅ 知识库管理API
+- ✅ 文档上传功能
+- ✅ PDF转Markdown（Marker集成）
+- ✅ 图片理解（Bedrock Vision API）
+- ✅ 文本分块和向量化
+- ✅ 同步任务系统
 
 **详细任务**: 见 [todo-phase2-knowledge-base.md](./todo-phase2-knowledge-base.md)
 
 ---
 
-### Phase 3: 检索问答系统 (3周)
+### Phase 3: 检索问答系统 (3周) ✅
 
 **目标**: 实现基于Multi-Agent的智能问答
 
 **关键产出**:
-- [ ] Query Rewrite
-- [ ] Hybrid Search（向量+BM25）
-- [ ] Sub-Agent系统
-- [ ] Main Agent综合
-- [ ] 流式输出
-- [ ] 引用提取
+- ✅ Query Rewrite（查询优化）
+- ✅ Hybrid Search（向量+BM25+RRF）
+- ✅ Sub-Agent系统（Strands框架）
+- ✅ Main Agent综合
+- ✅ 流式输出（SSE）
+- ✅ 引用提取（Citation事件）
 
 **详细任务**: 见 [todo-phase3-query.md](./todo-phase3-query.md)
 
@@ -111,14 +114,18 @@ Phase 5: 测试和优化 (1周)
 - [x] API接口设计文档
 - [x] 错误处理文档
 - [x] README文档
+- [x] **Phase 1: 项目初始化和基础框架**（2025-11-04 完成）
+- [x] **Phase 2: 知识库构建系统**（2025-11-05 完成）
+- [x] **Phase 3: 检索问答系统**（2025-11-05 完成）
 
 ### 进行中 🚧
-- [ ] Phase 1: 项目初始化和基础框架
+- [x] Phase 4: 前端开发 - 项目初始化 (20% 完成)
+  - ✅ Next.js 15.1.4 项目创建
+  - ✅ AWS Cloudscape Design System 集成
+  - ✅ 所有依赖安装完成 (546个包)
+  - 📋 待开发：页面和组件实现
 
 ### 待开始 📋
-- [ ] Phase 2: 知识库构建系统
-- [ ] Phase 3: 检索问答系统
-- [ ] Phase 4: 前端开发
 - [ ] Phase 5: 测试和优化
 
 ---
@@ -126,17 +133,17 @@ Phase 5: 测试和优化 (1周)
 ## 关键依赖
 
 ### 外部依赖
-- [ ] AWS账号开通
-- [ ] S3 Bucket创建
-- [ ] OpenSearch Serverless配置
-- [ ] Bedrock模型访问权限
-- [ ] EC2实例申请（带GPU）
+- ✅ AWS账号开通
+- ✅ S3 Bucket创建
+- ✅ OpenSearch Serverless配置
+- ✅ Bedrock模型访问权限（us-west-2）
+- ✅ EC2实例申请（带GPU - NVIDIA A10G）
 
 ### 技术依赖
-- [ ] Python 3.11+ 环境
-- [ ] Node.js 18+ 环境
-- [ ] CUDA驱动安装（GPU）
-- [ ] Marker安装配置
+- ✅ Python 3.12 环境
+- [ ] Node.js 20+ 环境（前端开发需要）
+- ✅ CUDA驱动安装（GPU）
+- ✅ Marker安装配置（v1.10.1）
 
 ---
 
@@ -206,6 +213,12 @@ Phase 5: 测试和优化 (1周)
 ---
 
 ## 更新日志
+
+### 2025-11-05
+- ✅ Phase 1-3 全部完成
+- 更新项目进度为60%
+- 后端核心功能100%完成
+- 标记外部依赖和技术依赖完成情况
 
 ### 2025-01-20
 - 初始化TODO文档

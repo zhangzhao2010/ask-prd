@@ -1,16 +1,16 @@
-# AKS-PRD - 基于PRD的智能检索问答系统
+# ASK-PRD - 基于PRD的智能检索问答系统
 
 > 为产品经理提供基于PRD文档的智能检索和问答能力
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Node](https://img.shields.io/badge/node-18+-green.svg)](https://nodejs.org/)
+[![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Node](https://img.shields.io/badge/node-20+-green.svg)](https://nodejs.org/)
 
 ---
 
 ## 项目简介
 
-AKS-PRD 是一个为产品经理打造的智能文档检索和问答系统。通过AI技术，帮助团队快速检索和理解大量的PRD（产品需求文档）历史信息。
+ASK-PRD 是一个为产品经理打造的智能文档检索和问答系统。通过AI技术，帮助团队快速检索和理解大量的PRD（产品需求文档）历史信息。
 
 ### 核心功能
 
@@ -35,23 +35,25 @@ AKS-PRD 是一个为产品经理打造的智能文档检索和问答系统。通
 ### 技术栈
 
 **前端**
-- Next.js 14
+- Next.js 16
 - AWS Cloudscape Design System
 - TypeScript
 
 **后端**
-- Python 3.11+
+- Python 3.12
 - FastAPI
 - SQLAlchemy
+- Strands Agents SDK（Multi-Agent框架）
 
 **基础设施**
 - AWS EC2（带GPU）
 - Amazon S3（对象存储）
 - Amazon OpenSearch Serverless（向量数据库）
-- AWS Bedrock（AI服务）
+- AWS Bedrock（AI服务，通过Strands集成）
 - SQLite（元数据库）
 
 **核心依赖**
+- strands-agents（Agent框架）
 - marker（PDF转Markdown）
 - langchain（文本处理）
 
@@ -119,9 +121,10 @@ ask-prd/
 
 ### 环境要求
 
-- Python 3.11+
-- Node.js 18+
+- Python 3.12
+- Node.js 20+
 - AWS账号（用于S3、OpenSearch、Bedrock）
+  - Region: us-west-2（已配置所需权限）
 - GPU（用于Marker PDF转换，推荐NVIDIA T4或更好）
 
 ### 安装步骤
@@ -136,13 +139,14 @@ cd ask-prd
 #### 2. 配置AWS
 
 ```bash
-# 配置AWS CLI
+# 配置AWS CLI (Region: us-west-2)
 aws configure
+# Default region name: us-west-2
 
-# 确保有以下服务的访问权限：
+# 当前开发服务器已具备以下权限：
 # - S3: 读写权限
 # - OpenSearch Serverless: 创建Collection权限
-# - Bedrock: 调用模型权限
+# - Bedrock: 调用模型权限（Claude Sonnet 4.5）
 ```
 
 #### 3. 后端安装
@@ -320,16 +324,16 @@ alembic downgrade -1
 
 ```bash
 # AWS配置
-AWS_REGION=us-east-1
+AWS_REGION=us-west-2
 AWS_ACCESS_KEY_ID=your_key
 AWS_SECRET_ACCESS_KEY=your_secret
 S3_BUCKET=your-bucket
 OPENSEARCH_ENDPOINT=your-opensearch-endpoint
 
 # Bedrock配置
-BEDROCK_REGION=us-east-1
+BEDROCK_REGION=us-west-2
 EMBEDDING_MODEL_ID=amazon.titan-embed-text-v2:0
-GENERATION_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
+GENERATION_MODEL_ID=global.anthropic.claude-sonnet-4-5-20250929-v1:0
 
 # 数据库配置
 DATABASE_PATH=/data/aks-prd.db
