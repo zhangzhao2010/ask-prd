@@ -88,14 +88,20 @@ ASK-PRD 采用前后端分离架构，主要分为两大子系统：
 ### 2.1 知识库构建流程（KnowledgeBase Builder）
 
 ```
-┌─────────────┐
-│ 1. 上传PDF  │
-│    到 S3    │
-└──────┬──────┘
+┌─────────────────────────────┐
+│ 1. 用户上传PDF              │
+│    - 前端调用upload接口     │
+│    - PDF上传到S3            │
+│    - 文档状态设为uploaded   │
+└──────┬──────────────────────┘
+       │
+       │ (用户操作分界线 - 需要手动触发下一步)
        │
        ▼
 ┌─────────────────────────────────────────┐
-│ 2. 创建同步任务 (异步)                   │
+│ 2. 用户点击"同步数据"按钮                │
+│    - 前端调用sync接口                    │
+│    - 创建同步任务 (异步)                 │
 └──────┬──────────────────────────────────┘
        │
        ▼
@@ -1258,22 +1264,139 @@ logger.error(
 
 ---
 
-## 八、安全设计
+## 八、前端交互设计
 
-### 8.1 AWS服务访问
+### 8.1 文档管理页面工作流程
+
+#### 8.1.1 上传和同步流程
+
+**设计原则**：上传和同步是两个独立的手动操作，用户完全控制处理时机。
+
+```
+用户操作流程：
+
+1. 选择知识库
+   ↓
+2. 点击"上传文档"按钮
+   ↓
+3. 选择PDF文件并上传
+   ↓
+4. 前端调用 POST /knowledge-bases/{kb_id}/documents/upload
+   ↓
+5. 文档上传到S3，状态为"uploaded"
+   ↓
+6. 文档列表显示新文档（状态：已上传）
+
+   --- 用户需要手动触发下一步 ---
+
+7. 用户点击"同步数据"按钮
+   ↓
+8. 显示同步确认Modal（说明处理流程）
+   ↓
+9. 用户确认，前端调用 POST /knowledge-bases/{kb_id}/sync
+   ↓
+10. 同步任务创建成功
+   ↓
+11. "同步任务"区域显示任务进度
+   ↓
+12. 用户点击"刷新"按钮查看进度更新
+   ↓
+13. 任务完成后，文档状态变为"completed"
+```
+
+#### 8.1.2 进度查询机制
+
+**设计原则**：不使用自动轮询，避免不必要的API请求。
+
+```
+手动刷新机制：
+
+1. 同步任务区域显示任务列表
+2. 用户点击"刷新"按钮
+   ↓
+3. 调用 GET /knowledge-bases/{kb_id}/sync-tasks
+   ↓
+4. 更新任务状态和进度
+5. 如果任务running，显示进度条
+6. 如果任务completed/failed，显示最终状态
+```
+
+**为什么不自动轮询**：
+- 减少服务器负载
+- 避免无效API请求
+- 用户按需查询，更灵活
+- 长时间运行的任务不会造成大量请求
+
+#### 8.1.3 页面状态管理
+
+```typescript
+// 关键状态
+const [documents, setDocuments] = useState<Document[]>([]);
+const [syncTasks, setSyncTasks] = useState<SyncTask[]>([]);
+const [uploadModalVisible, setUploadModalVisible] = useState(false);
+const [syncModalVisible, setSyncModalVisible] = useState(false);
+
+// 不使用定时器
+// ❌ 错误做法：
+// useEffect(() => {
+//   const interval = setInterval(loadSyncTasks, 3000);
+//   return () => clearInterval(interval);
+// }, [kbId]);
+
+// ✅ 正确做法：只在用户触发时刷新
+const handleRefresh = () => {
+  loadSyncTasks();
+  loadDocuments();
+};
+```
+
+### 8.2 按钮和操作说明
+
+| 按钮 | 位置 | 功能 | API调用 |
+|------|------|------|---------|
+| 上传文档 | 页面右上角 | 打开上传Modal | - |
+| 上传（Modal内） | 上传Modal | 上传文件到S3 | POST /documents/upload |
+| 同步数据 | 同步任务区域 | 打开同步确认Modal | - |
+| 开始同步（Modal内） | 同步Modal | 创建同步任务 | POST /sync |
+| 刷新（同步任务区域） | 同步任务区域 | 刷新任务状态 | GET /sync-tasks |
+| 刷新（文档列表） | 文档列表 | 刷新文档列表 | GET /documents |
+| 删除 | 文档列表 | 删除选中文档 | DELETE /documents |
+
+### 8.3 用户提示信息
+
+```typescript
+// 上传Modal提示
+"上传后文档将保存到S3，需要点击'同步数据'按钮触发转换和向量化处理。"
+
+// 同步Modal说明
+"将对知识库中状态为'已上传'的文档执行以下操作：
+- 使用Marker将PDF转换为Markdown和图片
+- 使用Claude Vision API理解图片内容
+- 将文本和图片分块并向量化
+- 上传转换结果到S3并存储向量到OpenSearch"
+
+// 同步任务区域空状态
+"暂无同步任务，点击'同步数据'按钮开始处理文档"
+```
+
+---
+
+## 九、安全设计
+
+### 9.1 AWS服务访问
 
 - 使用IAM Role而非硬编码AccessKey
 - 最小权限原则
 - S3 Bucket启用版本控制
 
-### 8.2 输入验证
+### 9.2 输入验证
 
 - 文件类型检查（仅允许PDF）
 - 文件大小限制（最大100MB）
 - 路径穿越防护
 - SQL注入防护（使用ORM参数化查询）
 
-### 8.3 数据安全
+### 9.3 数据安全
 
 - S3加密（SSE-S3或SSE-KMS）
 - OpenSearch启用加密
@@ -1281,7 +1404,7 @@ logger.error(
 
 ---
 
-## 九、未来优化方向
+## 十、未来优化方向
 
 1. **成本优化**
    - 引入Reranker减少需要精读的文档数

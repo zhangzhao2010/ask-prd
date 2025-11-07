@@ -73,7 +73,9 @@ class OpenSearchClient:
                 },
                 "mappings": {
                     "properties": {
-                        "chunk_id": {"type": "keyword"},
+                        "chunk_id": {
+                            "type": "keyword"  # 关键字段，用于关联SQLite
+                        },
                         "document_id": {"type": "keyword"},
                         "kb_id": {"type": "keyword"},
                         "chunk_type": {"type": "keyword"},
@@ -99,6 +101,13 @@ class OpenSearchClient:
                                 }
                             }
                         },
+                        # 文本chunk特有字段
+                        "char_start": {"type": "integer"},
+                        "char_end": {"type": "integer"},
+                        # 图片chunk特有字段
+                        "image_filename": {"type": "keyword"},
+                        "image_description": {"type": "text"},
+                        "image_type": {"type": "keyword"},
                         "created_at": {"type": "date"}
                     }
                 }
@@ -167,11 +176,11 @@ class OpenSearchClient:
             是否索引成功
         """
         try:
+            # OpenSearch Serverless不支持refresh参数
             response = self.client.index(
                 index=index_name,
                 id=doc_id,
-                body=document,
-                refresh=True
+                body=document
             )
             logger.debug("document_indexed", index_name=index_name, doc_id=doc_id)
             return response.get('result') in ['created', 'updated']
@@ -184,7 +193,7 @@ class OpenSearchClient:
         self,
         index_name: str,
         documents: List[Dict[str, Any]],
-        id_field: str = "chunk_id"
+        id_field: Optional[str] = None
     ) -> int:
         """
         批量索引文档
@@ -192,29 +201,76 @@ class OpenSearchClient:
         Args:
             index_name: 索引名称
             documents: 文档列表
-            id_field: 用作文档ID的字段名
+            id_field: 用作文档ID的字段名（None表示自动生成ID，适配OpenSearch Serverless）
 
         Returns:
             成功索引的文档数量
         """
         try:
-            from opensearchpy.helpers import bulk
+            from opensearchpy.helpers import bulk, BulkIndexError
 
             actions = []
             for doc in documents:
                 action = {
                     "_index": index_name,
-                    "_id": doc.get(id_field),
                     "_source": doc
                 }
+
+                # 只在指定id_field时才设置_id（OpenSearch Serverless不支持）
+                if id_field:
+                    action["_id"] = doc.get(id_field)
+
                 actions.append(action)
 
-            success, failed = bulk(self.client, actions, refresh=True)
-            logger.info("bulk_index_completed", index_name=index_name, success=success, failed=failed)
+            # bulk方法返回(成功数, 失败列表)
+            # 注意：部分失败时不会抛异常，需要检查failed
+            # OpenSearch Serverless不支持refresh参数，会自动管理刷新
+            success, failed = bulk(
+                self.client,
+                actions,
+                raise_on_error=False  # 不抛异常，返回失败详情
+            )
+
+            # 检查是否有失败
+            if failed:
+                logger.error(
+                    "bulk_index_partial_failure",
+                    index_name=index_name,
+                    success=success,
+                    failed_count=len(failed),
+                    failed_details=failed[:3]  # 只打印前3个失败详情，避免日志过长
+                )
+                # 提取第一个错误的详细信息
+                first_error = failed[0] if failed else {}
+                error_msg = f"批量索引部分失败: {len(failed)}条失败，首个错误: {first_error}"
+                raise VectorizationError({"error": error_msg, "failed_count": len(failed)})
+
+            logger.info("bulk_index_completed", index_name=index_name, success=success)
             return success
 
+        except BulkIndexError as e:
+            # opensearchpy的批量索引错误
+            logger.error(
+                "opensearch_bulk_index_error",
+                index_name=index_name,
+                error=str(e),
+                errors=e.errors[:3] if hasattr(e, 'errors') else None,
+                exc_info=True
+            )
+            raise VectorizationError({"error": f"批量索引失败: {str(e)}", "count": len(documents)})
+
+        except VectorizationError:
+            # 已经是VectorizationError，直接抛出
+            raise
+
         except Exception as e:
-            logger.error("opensearch_bulk_index_failed", index_name=index_name, error=str(e))
+            logger.error(
+                "opensearch_bulk_index_failed",
+                index_name=index_name,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
             raise VectorizationError({"error": str(e), "count": len(documents)})
 
     def delete_document(self, index_name: str, doc_id: str) -> bool:
@@ -229,10 +285,10 @@ class OpenSearchClient:
             是否删除成功
         """
         try:
+            # OpenSearch Serverless不支持refresh参数
             response = self.client.delete(
                 index=index_name,
-                id=doc_id,
-                refresh=True
+                id=doc_id
             )
             logger.debug("document_deleted", index_name=index_name, doc_id=doc_id)
             return response.get('result') == 'deleted'
@@ -253,10 +309,10 @@ class OpenSearchClient:
             删除的文档数量
         """
         try:
+            # OpenSearch Serverless不支持refresh参数
             response = self.client.delete_by_query(
                 index=index_name,
-                body={"query": query},
-                refresh=True
+                body={"query": query}
             )
             deleted = response.get('deleted', 0)
             logger.info("documents_deleted_by_query", index_name=index_name, deleted=deleted)
@@ -306,8 +362,9 @@ class OpenSearchClient:
 
             results = []
             for hit in response['hits']['hits']:
+                # 使用chunk_id而不是_id（适配OpenSearch Serverless）
                 results.append({
-                    'id': hit['_id'],
+                    'id': hit['_source'].get('chunk_id', hit['_id']),  # 优先用chunk_id
                     'score': hit['_score'],
                     'source': hit['_source']
                 })
@@ -364,8 +421,9 @@ class OpenSearchClient:
 
             results = []
             for hit in response['hits']['hits']:
+                # 使用chunk_id而不是_id（适配OpenSearch Serverless）
                 results.append({
-                    'id': hit['_id'],
+                    'id': hit['_source'].get('chunk_id', hit['_id']),  # 优先用chunk_id
                     'score': hit['_score'],
                     'source': hit['_source']
                 })

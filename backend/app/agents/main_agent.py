@@ -119,32 +119,42 @@ async def invoke_main_agent_stream(
     try:
         # 流式调用
         total_tokens = 0
+        prompt_tokens = 0
+        completion_tokens = 0
         answer_text = ""
 
         async for event in agent.stream_async(prompt):
-            # 文本增量事件
-            if text_delta := event.get("text_delta"):
-                answer_text += text_delta
+            # 文本增量事件（Strands使用"data"字段）
+            if data := event.get("data"):
+                answer_text += data
                 yield {
                     "type": "text_delta",
-                    "content": text_delta
+                    "content": data
                 }
 
-            # 完成事件
-            elif event.get("stop_reason"):
+            # 完成事件（包含result）
+            elif "result" in event:
+                result = event["result"]
+
                 # 获取token统计
-                if metrics := event.get("metrics"):
-                    usage = metrics.get("usage", {})
+                if hasattr(result, 'metrics') and result.metrics:
+                    usage = result.metrics.accumulated_usage
+                    prompt_tokens = usage.get("inputTokens", 0)
+                    completion_tokens = usage.get("outputTokens", 0)
                     total_tokens = usage.get("totalTokens", 0)
 
                 logger.info(
                     "main_agent_completed",
                     answer_length=len(answer_text),
-                    total_tokens=total_tokens
+                    total_tokens=total_tokens,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens
                 )
 
                 yield {
                     "type": "complete",
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens
                 }
 

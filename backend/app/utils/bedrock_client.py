@@ -88,7 +88,7 @@ class BedrockClient:
         normalize: bool = True
     ) -> List[List[float]]:
         """
-        生成文本向量（Titan Embeddings V2）
+        生成文本向量（Titan Embeddings V2）- 串行版本
 
         Args:
             texts: 文本列表
@@ -98,23 +98,22 @@ class BedrockClient:
             向量列表
         """
         try:
+            import json
+
             embeddings = []
 
+            # 串行处理，避免连接池耗尽和API限流
             for text in texts:
-                # 调用Bedrock Titan Embeddings V2
                 response = self.runtime_client.invoke_model(
                     modelId=settings.embedding_model_id,
-                    body={
+                    body=json.dumps({
                         "inputText": text,
                         "dimensions": 1024,
                         "normalize": normalize
-                    },
+                    }),
                     contentType="application/json",
                     accept="application/json"
                 )
-
-                # 解析响应
-                import json
                 result = json.loads(response['body'].read())
                 embedding = result.get('embedding', [])
                 embeddings.append(embedding)

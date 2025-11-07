@@ -22,8 +22,8 @@ logger = get_logger(__name__)
 class EmbeddingService:
     """向量化服务"""
 
-    # 批量处理大小
-    BATCH_SIZE = 25  # Bedrock Embedding API推荐的批量大小
+    # 批量处理大小（降低到10，避免连接池耗尽）
+    BATCH_SIZE = 10  # 串行处理，减少并发压力
 
     @staticmethod
     def generate_and_index_embeddings(
@@ -192,23 +192,31 @@ class EmbeddingService:
             )
             documents.append(doc)
 
-        # 4. 批量索引到OpenSearch
+        # 4. 索引到OpenSearch
+        # 注意：OpenSearch Serverless不支持指定_id，chunk_id作为普通字段存储
         try:
-            success_count = opensearch_client.bulk_index_documents(
+            # 将id字段重命名为chunk_id（保留在_source中）
+            for doc in documents:
+                doc["chunk_id"] = doc.pop("id")  # id → chunk_id
+
+            # 使用bulk索引（不指定_id，让OpenSearch自动生成）
+            success_count = opensearch_client.bulk_index(
                 index_name=index_name,
-                documents=documents
+                documents=documents,
+                id_field=None  # 不指定ID字段，自动生成
             )
 
             logger.debug(
                 "batch_indexed",
                 index_name=index_name,
-                success_count=success_count
+                success_count=success_count,
+                total=len(documents)
             )
 
             return success_count
 
         except Exception as e:
-            logger.error("opensearch_indexing_failed", error=str(e))
+            logger.error("opensearch_indexing_failed", error=str(e), exc_info=True)
             raise OpenSearchConnectionError(
                 details={"error": f"OpenSearch索引失败: {str(e)}"}
             )
@@ -347,10 +355,15 @@ class EmbeddingService:
                 logger.info("no_chunks_to_delete", document_id=document_id)
                 return 0
 
-            # 从OpenSearch删除
-            deleted_count = opensearch_client.delete_documents_batch(
+            # 从OpenSearch删除（使用chunk_id字段查询删除）
+            # 注意：OpenSearch Serverless不支持指定_id，使用chunk_id字段
+            deleted_count = opensearch_client.delete_by_query(
                 index_name=index_name,
-                doc_ids=chunk_ids
+                query={
+                    "terms": {
+                        "chunk_id": chunk_ids  # 按chunk_id字段删除
+                    }
+                }
             )
 
             logger.info(

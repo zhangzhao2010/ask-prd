@@ -96,8 +96,13 @@
 
 ### 接口信息
 - **路径**: `POST /knowledge-bases/{kb_id}/documents/upload`
-- **描述**: 上传PDF文档到指定知识库
+- **描述**: 上传PDF文档到S3并创建文档记录（不触发处理）
 - **Content-Type**: `multipart/form-data`
+
+### 重要说明
+- 此接口**仅上传文档到S3**，文档状态设置为`uploaded`
+- **不会自动触发**PDF转换和向量化处理
+- 需要调用`POST /knowledge-bases/{kb_id}/sync`接口手动触发数据同步
 
 ### 请求参数
 
@@ -368,7 +373,7 @@ response = requests.get(f"{BASE_URL}/knowledge-bases/{KB_ID}/documents")
 docs = response.json()['data']
 print(f"共有 {len(docs)} 个文档")
 
-# 2. 上传文档
+# 2. 上传文档（仅上传到S3）
 with open('/path/to/prd.pdf', 'rb') as f:
     files = {'file': f}
     response = requests.post(
@@ -378,12 +383,20 @@ with open('/path/to/prd.pdf', 'rb') as f:
 doc_id = response.json()['data']['id']
 print(f"上传成功，文档ID: {doc_id}")
 
-# 3. 获取文档详情
+# 3. 触发数据同步（需要手动调用）
+response = requests.post(
+    f"{BASE_URL}/knowledge-bases/{KB_ID}/sync",
+    json={"task_type": "incremental", "document_ids": []}
+)
+task_id = response.json()['data']['task_id']
+print(f"同步任务创建成功，任务ID: {task_id}")
+
+# 4. 获取文档详情
 response = requests.get(f"{BASE_URL}/documents/{doc_id}")
 doc_detail = response.json()['data']
 print(f"文档状态: {doc_detail['status']}")
 
-# 4. 删除文档
+# 5. 删除文档
 response = requests.delete(
     f"{BASE_URL}/knowledge-bases/{KB_ID}/documents",
     json={"document_ids": [doc_id]}

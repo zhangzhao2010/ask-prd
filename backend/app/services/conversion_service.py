@@ -4,7 +4,7 @@ PDF转换服务
 """
 import base64
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 from sqlalchemy.orm import Session
 
 from marker.models import create_model_dict
@@ -80,7 +80,7 @@ class ConversionService:
             converter = PdfConverter(
                 artifact_dict=artifact_dict,
                 processor_list=None,  # 使用默认处理器
-                renderer="pdf",  # PDF渲染器
+                renderer=None,  # 使用默认的MarkdownRenderer
                 config=None  # 使用默认配置
             )
 
@@ -88,12 +88,13 @@ class ConversionService:
             logger.info("converting_pdf", document_id=document_id)
             rendered = converter(pdf_local_path)
 
-            # 提取Markdown文本
-            markdown_content = text_from_rendered(rendered)
+            # 提取Markdown文本和图片
+            # text_from_rendered返回三个值: (markdown_text, metadata, images_dict)
+            markdown_content, _, images_dict = text_from_rendered(rendered)
 
-            # 提取图片
-            images_info = ConversionService._extract_images(
-                rendered=rendered,
+            # 处理图片
+            images_info = ConversionService._process_images(
+                images_dict=images_dict,
                 output_dir=output_dir,
                 document_id=document_id
             )
@@ -126,16 +127,16 @@ class ConversionService:
             )
 
     @staticmethod
-    def _extract_images(
-        rendered: Dict,
+    def _process_images(
+        images_dict: Dict[str, Any],
         output_dir: Path,
         document_id: str
     ) -> List[Dict]:
         """
-        从渲染结果中提取图片
+        处理从text_from_rendered返回的图片字典
 
         Args:
-            rendered: Marker渲染结果
+            images_dict: 图片字典，键是文件名（如'_page_1_Figure_8.jpeg'），值是PIL Image对象
             output_dir: 输出目录
             document_id: 文档ID
 
@@ -146,38 +147,32 @@ class ConversionService:
         images_dir = output_dir / "images"
         images_dir.mkdir(exist_ok=True)
 
-        # Marker的rendered结果包含图片数据
-        # 格式可能类似: rendered['images'] 或 rendered['figures']
-        # 这里需要根据实际的Marker输出结构调整
-
-        images_data = rendered.get("images", [])
-        if not images_data:
+        if not images_dict:
             logger.info("no_images_found", document_id=document_id)
             return images_info
 
-        for idx, img_data in enumerate(images_data):
+        logger.info(
+            "processing_images",
+            document_id=document_id,
+            count=len(images_dict)
+        )
+
+        for idx, (original_filename, pil_image) in enumerate(images_dict.items()):
             try:
-                # 生成图片文件名
-                img_filename = f"img_{idx:03d}.png"
+                # 保留原始文件名，或者生成新的
+                # 原始文件名格式: '_page_1_Figure_8.jpeg'
+                img_filename = original_filename.lstrip('_')  # 去掉开头的下划线
                 img_path = images_dir / img_filename
 
-                # 保存图片
-                # 根据img_data的格式保存（可能是PIL Image或bytes）
-                if hasattr(img_data, 'save'):
-                    # PIL Image对象
-                    img_data.save(img_path)
-                elif isinstance(img_data, bytes):
-                    # 字节数据
-                    with open(img_path, 'wb') as f:
-                        f.write(img_data)
-                else:
-                    logger.warning(
-                        "unknown_image_format",
-                        document_id=document_id,
-                        index=idx,
-                        type=type(img_data).__name__
-                    )
-                    continue
+                # 保存PIL Image对象
+                pil_image.save(img_path)
+
+                logger.debug(
+                    "image_saved",
+                    document_id=document_id,
+                    filename=img_filename,
+                    size=pil_image.size
+                )
 
                 images_info.append({
                     "filename": img_filename,
@@ -185,12 +180,6 @@ class ConversionService:
                     "index": idx,
                     "description": None  # 稍后生成
                 })
-
-                logger.debug(
-                    "image_extracted",
-                    document_id=document_id,
-                    filename=img_filename
-                )
 
             except Exception as e:
                 logger.error(
@@ -366,7 +355,7 @@ class ConversionService:
             temp_md_path.write_text(markdown_content, encoding="utf-8")
 
             # 上传到S3
-            s3_client.upload_file(str(temp_md_path), markdown_s3_key)
+            s3_client.upload_file_from_path(str(temp_md_path), markdown_s3_key)
 
             logger.info(
                 "markdown_uploaded",
@@ -383,7 +372,7 @@ class ConversionService:
                 img_s3_key = f"{kb_prefix}converted/{document_id}/images/{img_filename}"
 
                 # 上传图片
-                s3_client.upload_file(img_local_path, img_s3_key)
+                s3_client.upload_file_from_path(img_local_path, img_s3_key)
                 image_s3_keys.append(img_s3_key)
 
                 logger.debug(

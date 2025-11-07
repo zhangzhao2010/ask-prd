@@ -39,6 +39,9 @@ function DocumentsPageContent() {
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [syncModalVisible, setSyncModalVisible] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string>('');
 
   // 加载知识库列表
   const loadKnowledgeBases = async () => {
@@ -70,15 +73,14 @@ function DocumentsPageContent() {
     }
   };
 
-  // 加载同步任务列表
+  // 加载同步任务列表（只显示最新一条）
   const loadSyncTasks = async () => {
     if (!kbId) return;
 
     try {
       const response = await syncTaskAPI.list({
         kb_id: kbId,
-        page: 1,
-        page_size: 5,
+        limit: 1,  // 只获取最新的一条任务
       });
       setSyncTasks(response.items);
     } catch (error) {
@@ -94,9 +96,6 @@ function DocumentsPageContent() {
     if (kbId) {
       loadDocuments();
       loadSyncTasks();
-      // 轮询同步任务状态
-      const interval = setInterval(loadSyncTasks, 3000);
-      return () => clearInterval(interval);
     }
   }, [kbId, currentPage]);
 
@@ -105,31 +104,49 @@ function DocumentsPageContent() {
     doc.filename.toLowerCase().includes(filterText.toLowerCase())
   );
 
-  // 上传文档
+  // 上传文档（仅上传到S3，不触发同步）
   const handleUpload = async () => {
     if (uploadFiles.length === 0 || !kbId) return;
 
     setUploading(true);
     try {
-      // 上传所有文件
+      // 上传所有文件到S3
       await Promise.all(
         uploadFiles.map((file) => documentAPI.upload(kbId, file))
       );
 
-      // 创建同步任务
-      await syncTaskAPI.create({
-        kb_id: kbId,
-        task_type: 'incremental',
-      });
-
       setUploadModalVisible(false);
       setUploadFiles([]);
       loadDocuments();
-      loadSyncTasks();
     } catch (error) {
       console.error('Failed to upload documents:', error);
     } finally {
       setUploading(false);
+    }
+  };
+
+  // 触发数据同步
+  const handleSync = async () => {
+    if (!kbId) return;
+
+    setSyncing(true);
+    setSyncError('');
+    try {
+      await syncTaskAPI.create({
+        kb_id: kbId,
+        task_type: 'full_sync',
+      });
+
+      setSyncModalVisible(false);
+      loadSyncTasks();
+    } catch (error: any) {
+      console.error('Failed to create sync task:', error);
+      // 提取后端返回的错误信息
+      // 注意：axios拦截器已经提取了error.response.data，所以直接访问error.message
+      const errorMessage = error?.message || '创建同步任务失败';
+      setSyncError(errorMessage);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -216,39 +233,65 @@ function DocumentsPageContent() {
       </Container>
 
       {/* 同步任务监控 */}
-      {syncTasks.length > 0 && (
-        <Container header={<Header variant="h2">同步任务</Header>}>
-          <SpaceBetween size="m">
-            {syncTasks.map((task) => (
-              <Box key={task.id}>
-                <SpaceBetween size="xs">
-                  <Box>
-                    <SpaceBetween direction="horizontal" size="xs">
-                      <Box variant="strong">任务ID: {task.id}</Box>
-                      {taskStatusBadge(task.status)}
-                    </SpaceBetween>
-                  </Box>
-                  {task.status === 'running' && (
-                    <ProgressBar
-                      value={task.progress}
-                      label={task.current_step || '处理中'}
-                      description={`已处理: ${task.processed_documents}/${task.total_documents} | 失败: ${task.failed_documents}`}
-                    />
-                  )}
-                  {task.status === 'completed' && (
-                    <Alert type="success">
-                      同步完成！处理了 {task.processed_documents} 个文档
-                    </Alert>
-                  )}
-                  {task.status === 'failed' && (
-                    <Alert type="error">
-                      同步失败: {task.error_message}
-                    </Alert>
-                  )}
+      {kbId && (
+        <Container
+          header={
+            <Header
+              variant="h2"
+              actions={
+                <SpaceBetween direction="horizontal" size="xs">
+                  <Button onClick={loadSyncTasks} iconName="refresh">
+                    刷新
+                  </Button>
+                  <Button variant="primary" onClick={() => setSyncModalVisible(true)}>
+                    同步数据
+                  </Button>
                 </SpaceBetween>
+              }
+            >
+              同步任务
+            </Header>
+          }
+        >
+          {syncTasks.length > 0 ? (
+            <SpaceBetween size="m">
+              {syncTasks.map((task) => (
+                <Box key={task.id}>
+                  <SpaceBetween size="xs">
+                    <Box>
+                      <SpaceBetween direction="horizontal" size="xs">
+                        <Box variant="strong">任务ID: {task.id}</Box>
+                        {taskStatusBadge(task.status)}
+                      </SpaceBetween>
+                    </Box>
+                    {task.status === 'running' && (
+                      <ProgressBar
+                        value={task.progress}
+                        label={task.current_step || '处理中'}
+                        description={`已处理: ${task.processed_documents}/${task.total_documents} | 失败: ${task.failed_documents}`}
+                      />
+                    )}
+                    {task.status === 'completed' && (
+                      <Alert type="success">
+                        同步完成！处理了 {task.processed_documents} 个文档
+                      </Alert>
+                    )}
+                    {task.status === 'failed' && (
+                      <Alert type="error">
+                        同步失败: {task.error_message}
+                      </Alert>
+                    )}
+                  </SpaceBetween>
+                </Box>
+              ))}
+            </SpaceBetween>
+          ) : (
+            <Box textAlign="center" color="inherit">
+              <Box variant="p" color="text-body-secondary">
+                暂无同步任务，点击"同步数据"按钮开始处理文档
               </Box>
-            ))}
-          </SpaceBetween>
+            </Box>
+          )}
         </Container>
       )}
 
@@ -273,6 +316,7 @@ function DocumentsPageContent() {
         }
       >
         <Table
+          stickyHeader={false}
           loading={loading}
           selectedItems={selectedItems}
           onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
@@ -421,8 +465,57 @@ function DocumentsPageContent() {
           </FormField>
 
           <Alert type="info">
-            上传后会自动创建同步任务，开始转换和向量化处理。
-            可以在"同步任务"区域查看进度。
+            上传后文档将保存到S3，需要点击"同步数据"按钮触发转换和向量化处理。
+          </Alert>
+        </SpaceBetween>
+      </Modal>
+
+      {/* 同步数据Modal */}
+      <Modal
+        visible={syncModalVisible}
+        onDismiss={() => {
+          setSyncModalVisible(false);
+          setSyncError('');
+        }}
+        header="同步数据"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button
+                variant="link"
+                onClick={() => {
+                  setSyncModalVisible(false);
+                  setSyncError('');
+                }}
+              >
+                取消
+              </Button>
+              <Button variant="primary" onClick={handleSync} loading={syncing}>
+                开始同步
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="m">
+          {syncError && (
+            <Alert type="error" dismissible onDismiss={() => setSyncError('')}>
+              {syncError}
+            </Alert>
+          )}
+          <Box>
+            将对知识库中状态为"已上传"的文档执行以下操作：
+          </Box>
+          <Box>
+            <ul>
+              <li>使用Marker将PDF转换为Markdown和图片</li>
+              <li>使用Claude Vision API理解图片内容</li>
+              <li>将文本和图片分块并向量化</li>
+              <li>上传转换结果到S3并存储向量到OpenSearch</li>
+            </ul>
+          </Box>
+          <Alert type="warning">
+            同步过程可能需要较长时间，请在"同步任务"区域查看进度。
           </Alert>
         </SpaceBetween>
       </Modal>

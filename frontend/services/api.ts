@@ -175,8 +175,8 @@ export const syncTaskAPI = {
    */
   async list(params: {
     kb_id: string;
-    page?: number;
-    page_size?: number;
+    status?: string;
+    limit?: number;  // 返回数量（后端参数名是limit）
   }): Promise<SyncTaskListResponse> {
     const response = await apiClient.get<SyncTaskListResponse>('/sync-tasks', { params });
     return response.data;

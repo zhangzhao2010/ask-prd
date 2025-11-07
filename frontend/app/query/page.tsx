@@ -91,16 +91,26 @@ function QueryPageContent() {
               // 处理不同类型的事件
               if (data.type === 'status') {
                 setStatus((data as any).message);
-              } else if (data.type === 'text_delta') {
-                setAnswer((prev) => prev + (data as any).text);
+              } else if (data.type === 'chunk') {
+                // 正确的事件类型是 chunk，字段名是 content
+                setAnswer((prev) => prev + (data as any).content);
                 // 自动滚动到底部
                 setTimeout(() => {
                   answerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
                 }, 0);
-              } else if (data.type === 'complete') {
-                const completeData = data as any;
-                setCitations(completeData.citations || []);
-                setMetrics(completeData.metrics || {});
+              } else if (data.type === 'citation') {
+                // 处理引用事件
+                setCitations((prev) => [...prev, data as any]);
+              } else if (data.type === 'tokens') {
+                // Token统计事件
+                const tokenData = data as any;
+                setMetrics({
+                  prompt_tokens: tokenData.prompt_tokens || 0,
+                  completion_tokens: tokenData.completion_tokens || 0,
+                  total_tokens: tokenData.total_tokens || 0,
+                });
+              } else if (data.type === 'done') {
+                // 完成事件
                 setStatus('完成');
                 setIsQuerying(false);
               } else if (data.type === 'error') {

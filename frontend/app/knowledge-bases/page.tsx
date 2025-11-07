@@ -108,6 +108,7 @@ export default function KnowledgeBasesPage() {
         }
       >
         <Table
+          stickyHeader={false}
           loading={loading}
           selectedItems={selectedItems}
           onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}

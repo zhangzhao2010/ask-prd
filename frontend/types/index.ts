@@ -186,7 +186,6 @@ export interface QueryHistoryListResponse {
 
 export interface StreamEvent {
   type: string;
-  timestamp: string;
 }
 
 export interface StatusEvent extends StreamEvent {
@@ -194,22 +193,54 @@ export interface StatusEvent extends StreamEvent {
   message: string;
 }
 
-export interface TextDeltaEvent extends StreamEvent {
-  type: 'text_delta';
-  text: string;
+export interface RetrievedDocumentsEvent extends StreamEvent {
+  type: 'retrieved_documents';
+  document_ids: string[];
+  document_count: number;
+  chunk_count: number;
 }
 
-export interface CompleteEvent extends StreamEvent {
-  type: 'complete';
-  citations: CitationItem[];
-  metrics: Record<string, number>;
+export interface ChunkEvent extends StreamEvent {
+  type: 'chunk';
+  content: string;
+}
+
+export interface CitationEvent extends StreamEvent {
+  type: 'citation';
+  chunk_id: string;
+  chunk_type: 'text' | 'image';
+  document_id: string;
+  document_name: string;
+  content?: string;
+  chunk_index: number;
+  image_url?: string;
+  image_description?: string;
+}
+
+export interface TokensEvent extends StreamEvent {
+  type: 'tokens';
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens: number;
+}
+
+export interface DoneEvent extends StreamEvent {
+  type: 'done';
+  query_id: string;
 }
 
 export interface ErrorEvent extends StreamEvent {
   type: 'error';
-  error_code: string;
   message: string;
+  code?: string;
   details?: Record<string, any>;
 }
 
-export type QueryStreamEvent = StatusEvent | TextDeltaEvent | CompleteEvent | ErrorEvent;
+export type QueryStreamEvent =
+  | StatusEvent
+  | RetrievedDocumentsEvent
+  | ChunkEvent
+  | CitationEvent
+  | TokensEvent
+  | DoneEvent
+  | ErrorEvent;

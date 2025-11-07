@@ -71,17 +71,17 @@ class TaskService:
             from app.core.errors import ASKPRDException
             raise ASKPRDException(
                 error_code="7002",
-                message="该知识库已有同步任务在运行",
+                message="该知识库已有同步任务在运行，请稍后再试",
                 details={"running_task_id": running_task.id},
-                status_code=400
+                status_code=409  # 使用409 Conflict更语义化
             )
 
         # 确定要处理的文档
         if task_type == "full_sync":
-            # 全量同步：所有uploaded状态的文档
+            # 全量同步：所有uploaded或failed状态的文档（失败的文档支持重新同步）
             documents = db.query(Document).filter(
                 Document.kb_id == kb_id,
-                Document.status == "uploaded"
+                Document.status.in_(["uploaded", "failed"])
             ).all()
             doc_ids = [doc.id for doc in documents]
         else:
@@ -101,7 +101,21 @@ class TaskService:
                     raise DocumentNotFoundError(",".join(missing_ids))
 
         if not doc_ids:
-            logger.warning("no_documents_to_sync", kb_id=kb_id)
+            logger.warning("no_documents_to_sync", kb_id=kb_id, task_type=task_type)
+            from app.core.errors import ASKPRDException
+
+            # 根据任务类型提供友好的错误提示
+            if task_type == "full_sync":
+                message = "该知识库中没有需要同步的文档（所有文档都已处理完成）"
+            else:
+                message = "没有指定要同步的文档"
+
+            raise ASKPRDException(
+                error_code="7004",
+                message=message,
+                details={"kb_id": kb_id, "task_type": task_type},
+                status_code=400
+            )
 
         # 创建任务
         task_id = f"task-{uuid.uuid4()}"
@@ -269,10 +283,10 @@ class TaskService:
             文档列表
         """
         if task_type == "full_sync":
-            # 全量同步：所有uploaded状态的文档
+            # 全量同步：所有uploaded或failed状态的文档（失败的文档支持重新同步）
             documents = db.query(Document).filter(
                 Document.kb_id == kb_id,
-                Document.status == "uploaded"
+                Document.status.in_(["uploaded", "failed"])
             ).all()
         else:
             # 增量同步：指定的文档

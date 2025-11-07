@@ -25,8 +25,8 @@ class QueryService:
     """查询服务"""
 
     # 检索参数
-    TOP_K = 10  # 检索的chunk数量
-    MAX_DOCUMENTS = 3  # 最多读取的文档数
+    TOP_K = 20  # 检索的chunk数量
+    MAX_DOCUMENTS = 10  # 最多读取的文档数
     MAX_CONCURRENT_AGENTS = 5  # 最大并发Agent数
 
     @staticmethod
@@ -47,7 +47,7 @@ class QueryService:
             流式事件
         """
         query_id = str(uuid.uuid4())
-        start_time = datetime.utcnow()
+        start_time = datetime.now(datetime.timezone.utc)
 
         logger.info(
             "start_query_execution",
@@ -155,7 +155,7 @@ class QueryService:
             }
 
             main_agent = create_main_agent()
-            total_tokens = 0
+            total_tokens = 0  # 初始化变量
 
             async for event in invoke_main_agent_stream(
                 agent=main_agent,
@@ -170,10 +170,16 @@ class QueryService:
                         "content": event.get("content", "")
                     }
                 elif event.get("type") == "complete":
-                    total_tokens = event.get("total_tokens", 0)
+                    # 提取token统计（并更新外部变量）
+                    prompt_tokens = event.get("prompt_tokens", 0)
+                    completion_tokens = event.get("completion_tokens", 0)
+                    total_tokens = event.get("total_tokens", 0)  # 更新外部变量
+
                     # 先发送tokens事件
                     yield {
                         "type": "tokens",
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
                         "total_tokens": total_tokens
                     }
                     # 再发送done事件
@@ -242,7 +248,7 @@ class QueryService:
             index_name=index_name,
             query_text=query_text,
             query_vector=query_embedding,
-            k=QueryService.TOP_K
+            top_k=QueryService.TOP_K
         )
 
         logger.info(
