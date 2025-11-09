@@ -265,7 +265,7 @@ class QueryService:
         按文档聚合chunks
 
         Args:
-            chunks: chunk列表
+            chunks: chunk列表（来自OpenSearch，格式：{'id': '...', 'score': '...', 'source': {...}}）
 
         Returns:
             按document_id分组的字典
@@ -273,13 +273,22 @@ class QueryService:
         doc_chunks = {}
 
         for chunk in chunks:
-            doc_id = chunk.get("document_id")
+            # OpenSearch返回格式：document_id在source里面
+            source = chunk.get("source", {})
+            doc_id = source.get("document_id")
+
+            # 跳过没有document_id的chunk
+            if not doc_id:
+                logger.warning("chunk_missing_document_id", chunk_id=chunk.get("id"))
+                continue
+
             if doc_id not in doc_chunks:
                 doc_chunks[doc_id] = {
                     "document_id": doc_id,
                     "chunks": []
                 }
 
+            # 保存完整的chunk信息（包括source）
             doc_chunks[doc_id]["chunks"].append(chunk)
 
         return doc_chunks
@@ -499,7 +508,8 @@ class QueryService:
             start_time: 开始时间
         """
         try:
-            response_time = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            from datetime import timezone
+            response_time = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
 
             history = QueryHistory(
                 id=query_id,
@@ -526,6 +536,116 @@ class QueryService:
                 query_id=query_id,
                 error=str(e)
             )
+
+    @staticmethod
+    async def execute_query_two_stage(
+        db: Session,
+        kb_id: str,
+        query_text: str
+    ) -> AsyncGenerator[Dict, None]:
+        """
+        使用TwoStageExecutor执行查询并流式返回结果
+
+        Args:
+            db: 数据库会话
+            kb_id: 知识库ID
+            query_text: 用户问题
+
+        Yields:
+            流式事件
+        """
+        from datetime import timezone
+        query_id = str(uuid.uuid4())
+        start_time = datetime.now(timezone.utc)
+
+        logger.info(
+            "start_two_stage_query",
+            query_id=query_id,
+            kb_id=kb_id,
+            query=query_text[:100]
+        )
+
+        try:
+            # 验证知识库存在
+            kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+            if not kb:
+                raise KnowledgeBaseNotFoundError(kb_id)
+
+            # Step 1: 混合检索
+            yield {
+                "type": "status",
+                "message": "正在检索相关文档..."
+            }
+
+            search_results = await QueryService._hybrid_search(
+                db=db,
+                kb=kb,
+                query_text=query_text
+            )
+
+            if not search_results:
+                yield {
+                    "type": "status",
+                    "message": "未找到相关文档"
+                }
+                yield {
+                    "type": "answer_delta",
+                    "data": {"text": "抱歉，在知识库中未找到与您问题相关的内容。"}
+                }
+                yield {
+                    "type": "done",
+                    "data": {"query_id": query_id, "tokens": {"total_tokens": 0}}
+                }
+                return
+
+            # Step 2: 提取唯一的Document ID列表
+            doc_chunks = QueryService._group_chunks_by_document(search_results)
+            document_ids = list(doc_chunks.keys())[:QueryService.MAX_DOCUMENTS]
+
+            logger.info(
+                "documents_retrieved",
+                query_id=query_id,
+                document_count=len(document_ids)
+            )
+
+            yield {
+                "type": "retrieved_documents",
+                "document_ids": document_ids,
+                "document_count": len(document_ids)
+            }
+
+            # Step 3: 使用TwoStageExecutor处理
+            from app.services.agentic_robot import TwoStageExecutor
+
+            executor = TwoStageExecutor(
+                db_session=db,
+                s3_client=s3_client,
+                bedrock_client=bedrock_client
+            )
+
+            async for event in executor.execute_streaming(
+                query=query_text,
+                document_ids=document_ids
+            ):
+                yield event
+
+            logger.info(
+                "two_stage_query_completed",
+                query_id=query_id
+            )
+
+        except Exception as e:
+            logger.error(
+                "two_stage_query_failed",
+                query_id=query_id,
+                error=str(e),
+                exc_info=True
+            )
+
+            yield {
+                "type": "error",
+                "data": {"message": f"查询执行失败: {str(e)}"}
+            }
 
 
 # 全局实例

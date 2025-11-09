@@ -138,3 +138,93 @@ async def delete_document(
 
     DocumentService.delete_document(db, doc_id)
     return None
+
+
+@router.get("/{document_id}/images/{image_filename}")
+async def get_document_image(
+    document_id: str,
+    image_filename: str,
+    db: Session = Depends(get_db)
+):
+    """
+    获取文档的图片（从本地缓存提供）
+
+    - 优先使用本地缓存
+    - 缓存不存在时从S3下载
+    - 返回图片二进制数据
+    """
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+    from app.core.config import settings
+    from app.utils.s3_client import s3_client
+
+    logger.info(
+        "api_get_document_image",
+        document_id=document_id,
+        image_filename=image_filename
+    )
+
+    # 1. 构建本地路径
+    local_path = Path(settings.cache_dir) / "documents" / document_id / image_filename
+
+    # 2. 检查文件是否存在
+    if not local_path.exists():
+        # 尝试从S3下载
+        logger.info(
+            "image_not_in_cache_downloading",
+            document_id=document_id,
+            image_filename=image_filename
+        )
+
+        # 从数据库查询图片的S3路径
+        from app.models.database import Chunk
+
+        image_chunk = db.query(Chunk).filter(
+            Chunk.document_id == document_id,
+            Chunk.chunk_type == 'image',
+            Chunk.image_filename == image_filename
+        ).first()
+
+        if not image_chunk or not image_chunk.image_s3_key:
+            logger.warning(
+                "image_not_found",
+                document_id=document_id,
+                image_filename=image_filename
+            )
+            raise HTTPException(404, "Image not found")
+
+        # 从S3下载
+        try:
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            s3_client.download_file(image_chunk.image_s3_key, str(local_path))
+            logger.info(
+                "image_downloaded_from_s3",
+                document_id=document_id,
+                image_filename=image_filename
+            )
+        except Exception as e:
+            logger.error(
+                "image_download_failed",
+                document_id=document_id,
+                s3_key=image_chunk.image_s3_key,
+                error=str(e)
+            )
+            raise HTTPException(500, f"Failed to download image: {str(e)}")
+
+    # 3. 判断Content-Type
+    ext = image_filename.split('.')[-1].lower()
+    content_type_map = {
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'gif': 'image/gif',
+        'webp': 'image/webp'
+    }
+    content_type = content_type_map.get(ext, 'application/octet-stream')
+
+    # 4. 返回图片
+    return FileResponse(
+        local_path,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"}
+    )

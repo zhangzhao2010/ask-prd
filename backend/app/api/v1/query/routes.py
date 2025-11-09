@@ -39,7 +39,8 @@ async def query_stream(
     async def event_generator():
         """SSE事件生成器"""
         try:
-            async for event in query_service.execute_query_stream(
+            # 使用新的Two-Stage执行器
+            async for event in query_service.execute_query_two_stage(
                 db=db,
                 kb_id=kb_id,
                 query_text=query

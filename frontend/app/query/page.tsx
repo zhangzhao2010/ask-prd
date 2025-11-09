@@ -92,14 +92,44 @@ function QueryPageContent() {
               if (data.type === 'status') {
                 setStatus((data as any).message);
               } else if (data.type === 'chunk') {
-                // 正确的事件类型是 chunk，字段名是 content
+                // Multi-Agent系统的事件类型：chunk，字段名是 content
                 setAnswer((prev) => prev + (data as any).content);
                 // 自动滚动到底部
                 setTimeout(() => {
                   answerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
                 }, 0);
+              } else if (data.type === 'answer_delta') {
+                // Two-Stage系统的事件类型：answer_delta，字段在 data.text
+                const textChunk = (data as any).data?.text || '';
+                setAnswer((prev) => prev + textChunk);
+                // 自动滚动到底部
+                setTimeout(() => {
+                  answerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                }, 0);
+              } else if (data.type === 'progress') {
+                // Two-Stage系统的进度事件
+                const progressData = (data as any).data;
+                setStatus(`正在处理文档 ${progressData.current}/${progressData.total}: ${progressData.doc_name}`);
+              } else if (data.type === 'retrieved_documents') {
+                // Two-Stage系统的文档检索事件
+                const docData = (data as any);
+                setStatus(`已检索到 ${docData.document_count} 个相关文档`);
+              } else if (data.type === 'references') {
+                // Two-Stage系统的引用事件（批量）
+                const refs = (data as any).data || [];
+                // 将Two-Stage的Reference格式转换为前端的CitationItem格式
+                const newCitations = refs.map((ref: any) => ({
+                  chunk_id: ref.ref_id,
+                  chunk_type: ref.chunk_type,
+                  document_id: ref.doc_id,
+                  document_name: ref.doc_name,
+                  chunk_index: parseInt(ref.ref_id.split('-').pop() || '0') - 1,
+                  content: ref.content,
+                  image_url: ref.image_url,
+                }));
+                setCitations(newCitations);
               } else if (data.type === 'citation') {
-                // 处理引用事件
+                // Multi-Agent系统的引用事件（单个）
                 setCitations((prev) => [...prev, data as any]);
               } else if (data.type === 'tokens') {
                 // Token统计事件

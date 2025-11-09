@@ -60,10 +60,10 @@ class BedrockClient:
             BedrockModel实例
         """
         try:
+            # 注意：不能同时传boto_session和region_name
             model = BedrockModel(
                 model_id=settings.generation_model_id,
-                region_name=settings.bedrock_region,
-                boto_session=self.boto_session,
+                boto_session=self.boto_session,  # 只传boto_session，region从session中获取
                 temperature=temperature,
                 max_tokens=max_tokens,
                 streaming=streaming
