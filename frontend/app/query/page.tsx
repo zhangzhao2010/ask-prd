@@ -29,7 +29,6 @@ function QueryPageContent() {
   const [citations, setCitations] = useState<CitationItem[]>([]);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  const [metrics, setMetrics] = useState<Record<string, number>>({});
   const answerRef = useRef<HTMLDivElement>(null);
 
   // 加载知识库列表
@@ -56,7 +55,6 @@ function QueryPageContent() {
     setCitations([]);
     setStatus('正在处理...');
     setError('');
-    setMetrics({});
 
     try {
       const stream = await queryAPI.stream(kbId, query.trim());
@@ -131,14 +129,6 @@ function QueryPageContent() {
               } else if (data.type === 'citation') {
                 // Multi-Agent系统的引用事件（单个）
                 setCitations((prev) => [...prev, data as any]);
-              } else if (data.type === 'tokens') {
-                // Token统计事件
-                const tokenData = data as any;
-                setMetrics({
-                  prompt_tokens: tokenData.prompt_tokens || 0,
-                  completion_tokens: tokenData.completion_tokens || 0,
-                  total_tokens: tokenData.total_tokens || 0,
-                });
               } else if (data.type === 'done') {
                 // 完成事件
                 setStatus('完成');
@@ -160,19 +150,6 @@ function QueryPageContent() {
       setStatus('错误');
       setIsQuerying(false);
     }
-  };
-
-  // 格式化Token数
-  const formatTokens = (tokens?: number) => {
-    if (!tokens) return '0';
-    return tokens.toLocaleString();
-  };
-
-  // 格式化响应时间
-  const formatTime = (ms?: number) => {
-    if (!ms) return '0ms';
-    if (ms < 1000) return `${ms}ms`;
-    return `${(ms / 1000).toFixed(2)}s`;
   };
 
   return (
@@ -263,23 +240,7 @@ function QueryPageContent() {
       {/* 答案展示区 */}
       {answer && (
         <Container
-          header={
-            <Header
-              variant="h2"
-              actions={
-                <SpaceBetween direction="horizontal" size="xs">
-                  <Box variant="awsui-key-label">
-                    Tokens: {formatTokens(metrics.total_tokens)}
-                  </Box>
-                  <Box variant="awsui-key-label">
-                    耗时: {formatTime(metrics.response_time_ms)}
-                  </Box>
-                </SpaceBetween>
-              }
-            >
-              答案
-            </Header>
-          }
+          header={<Header variant="h2">答案</Header>}
         >
           <div ref={answerRef} className="markdown-content">
             <ReactMarkdown>
@@ -360,26 +321,6 @@ function QueryPageContent() {
                 </SpaceBetween>
               </div>
             ))}
-          </ColumnLayout>
-        </Container>
-      )}
-
-      {/* Token统计 */}
-      {metrics.total_tokens > 0 && (
-        <Container header={<Header variant="h3">Token统计</Header>}>
-          <ColumnLayout columns={3} variant="text-grid">
-            <div>
-              <Box variant="awsui-key-label">输入Tokens</Box>
-              <Box variant="p">{formatTokens(metrics.prompt_tokens)}</Box>
-            </div>
-            <div>
-              <Box variant="awsui-key-label">输出Tokens</Box>
-              <Box variant="p">{formatTokens(metrics.completion_tokens)}</Box>
-            </div>
-            <div>
-              <Box variant="awsui-key-label">总计Tokens</Box>
-              <Box variant="p">{formatTokens(metrics.total_tokens)}</Box>
-            </div>
           </ColumnLayout>
         </Container>
       )}

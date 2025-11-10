@@ -34,7 +34,6 @@
 | retrieved_documents | 检索到的文档 | 检索完成后 |
 | chunk | 答案文本片段 | 答案生成中（流式） |
 | citation | 引用信息 | 发现引用时 |
-| tokens | Token统计 | 生成完成后 |
 | done | 生成完成 | 全部完成时 |
 | error | 错误 | 发生错误时 |
 
@@ -95,11 +94,8 @@ data: {"content": "进一步增强了安全性和便捷性：\n- 增加人脸识
 event: citation
 data: {"chunk_id": "chunk-ee0e8400", "chunk_type": "text", "document_id": "doc-cc0e8400", "document_name": "PRD_v2.0.pdf", "content": "v2.0新增人脸识别登录和第三方OAuth支持...", "chunk_index": 12}
 
-event: tokens
-data: {"prompt_tokens": 15230, "completion_tokens": 856, "total_tokens": 16086}
-
 event: done
-data: {"query_id": "query-ff0e8400-e29b-41d4-a716-446655440012", "created_at": "2025-01-20T11:00:00Z"}
+data: {}
 ```
 
 ### 错误事件
@@ -136,177 +132,6 @@ data: {"query_id": null}
   "image_url": "/api/chunks/chunk-dd0e8400/image",
   "image_description": "登录流程图，展示了用户输入、验证、跳转三个步骤",
   "chunk_index": 8
-}
-```
-
----
-
-## 2. 获取查询历史列表
-
-### 接口信息
-- **路径**: `GET /knowledge-bases/{kb_id}/query-history`
-- **描述**: 获取指定知识库的查询历史
-
-### 请求参数
-
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| kb_id | string | path | 是 | 知识库ID |
-| page | integer | query | 否 | 页码，默认1 |
-| page_size | integer | query | 否 | 每页数量，默认20，最大100 |
-| status | string | query | 否 | 过滤状态：completed/failed |
-
-### 响应示例
-
-```json
-{
-  "data": [
-    {
-      "id": "query-ff0e8400-e29b-41d4-a716-446655440012",
-      "kb_id": "kb-550e8400-e29b-41d4-a716-446655440000",
-      "query_text": "登录注册模块的演进历史是怎样的？",
-      "answer_preview": "根据检索到的文档，登录注册模块经历了以下演进：\n\n第一阶段（v1.0，2023年1月）：最初版本仅支持手机号+短信验证码登录方式...",
-      "total_tokens": 16086,
-      "response_time_ms": 8500,
-      "status": "completed",
-      "created_at": "2025-01-20T11:00:00Z"
-    },
-    {
-      "id": "query-gg0e8400-e29b-41d4-a716-446655440013",
-      "kb_id": "kb-550e8400-e29b-41d4-a716-446655440000",
-      "query_text": "支付模块有哪些功能？",
-      "answer_preview": "支付模块主要包含以下功能：\n\n1. **多种支付方式**：支持微信支付、支付宝、银行卡...",
-      "total_tokens": 12450,
-      "response_time_ms": 7200,
-      "status": "completed",
-      "created_at": "2025-01-20T10:30:00Z"
-    },
-    {
-      "id": "query-hh0e8400-e29b-41d4-a716-446655440014",
-      "kb_id": "kb-550e8400-e29b-41d4-a716-446655440000",
-      "query_text": "xxxx模块设计",
-      "answer_preview": null,
-      "total_tokens": 0,
-      "response_time_ms": 2500,
-      "status": "failed",
-      "error_message": "未找到相关文档",
-      "created_at": "2025-01-20T09:15:00Z"
-    }
-  ],
-  "pagination": {
-    "page": 1,
-    "page_size": 20,
-    "total": 150,
-    "total_pages": 8
-  }
-}
-```
-
----
-
-## 3. 获取查询详情
-
-### 接口信息
-- **路径**: `GET /query-history/{query_id}`
-- **描述**: 获取指定查询的完整信息
-
-### 请求参数
-
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| query_id | string | path | 是 | 查询ID |
-
-### 响应示例
-
-```json
-{
-  "data": {
-    "id": "query-ff0e8400-e29b-41d4-a716-446655440012",
-    "kb_id": "kb-550e8400-e29b-41d4-a716-446655440000",
-    "kb_name": "产品PRD知识库",
-    "query_text": "登录注册模块的演进历史是怎样的？",
-    "rewritten_queries": [
-      "登录功能的版本迭代历史",
-      "用户认证模块的发展历程",
-      "注册登录方式的演进"
-    ],
-    "retrieved_document_ids": [
-      "doc-aa0e8400",
-      "doc-bb0e8400",
-      "doc-cc0e8400"
-    ],
-    "answer": "根据检索到的文档，登录注册模块经历了以下演进：\n\n## 第一阶段（v1.0，2023年1月）\n\n最初版本仅支持**手机号+短信验证码**登录方式。[^1]\n\n## 第二阶段（v1.5，2023年6月）\n\n新增了以下登录方式：\n- 微信一键登录\n- 邮箱+密码登录\n\n登录流程如下图所示：[^2]\n\n## 第三阶段（v2.0，2024年1月）\n\n进一步增强了安全性和便捷性：\n- 增加人脸识别登录\n- 支持第三方OAuth（Apple、Google）\n- 增加设备信任机制[^3]",
-    "citations": [
-      {
-        "chunk_id": "chunk-cc0e8400",
-        "chunk_type": "text",
-        "document_id": "doc-aa0e8400",
-        "document_name": "PRD_v1.0.pdf",
-        "content": "v1.0版本支持手机号+短信验证码登录，用户输入手机号后，系统发送6位数字验证码，验证通过后创建账号或登录。",
-        "chunk_index": 5
-      },
-      {
-        "chunk_id": "chunk-dd0e8400",
-        "chunk_type": "image",
-        "document_id": "doc-bb0e8400",
-        "document_name": "PRD_v1.5.pdf",
-        "image_url": "/api/chunks/chunk-dd0e8400/image",
-        "image_description": "登录流程图，展示了用户输入、验证、跳转三个步骤，采用泳道图形式，包含用户端、服务端、第三方服务三个角色。",
-        "chunk_index": 8
-      },
-      {
-        "chunk_id": "chunk-ee0e8400",
-        "chunk_type": "text",
-        "document_id": "doc-cc0e8400",
-        "document_name": "PRD_v2.0.pdf",
-        "content": "v2.0新增人脸识别登录和第三方OAuth支持（Apple、Google），同时引入设备信任机制，在信任设备上可跳过二次验证。",
-        "chunk_index": 12
-      }
-    ],
-    "total_tokens": 16086,
-    "prompt_tokens": 15230,
-    "completion_tokens": 856,
-    "response_time_ms": 8500,
-    "status": "completed",
-    "created_at": "2025-01-20T11:00:00Z"
-  }
-}
-```
-
-### 错误响应
-
-**查询不存在**（404）：
-```json
-{
-  "error": {
-    "code": "8001",
-    "message": "查询记录不存在",
-    "details": {
-      "query_id": "query-invalid-id"
-    }
-  }
-}
-```
-
----
-
-## 4. 删除查询历史
-
-### 接口信息
-- **路径**: `DELETE /query-history/{query_id}`
-- **描述**: 删除指定的查询记录
-
-### 请求参数
-
-| 参数 | 类型 | 位置 | 必填 | 说明 |
-|------|------|------|------|------|
-| query_id | string | path | 是 | 查询ID |
-
-### 响应示例
-
-```json
-{
-  "message": "查询历史删除成功"
 }
 ```
 
@@ -356,12 +181,8 @@ for event in client.events():
     elif event.event == 'citation':
         citations.append(data)
 
-    elif event.event == 'tokens':
-        print(f"\n\nToken消耗: {data['total_tokens']}")
-
     elif event.event == 'done':
-        query_id = data['query_id']
-        print(f"\n完成！查询ID: {query_id}")
+        print(f"\n完成！")
 
     elif event.event == 'error':
         print(f"\n错误: {data['message']}")
@@ -421,9 +242,6 @@ const streamQuery = (query) => {
           } else if (data.chunk_id) {
             // 引用
             addCitation(data);
-          } else if (data.total_tokens) {
-            // Token统计
-            document.getElementById('tokens').innerText = data.total_tokens;
           }
         }
       });
@@ -447,15 +265,6 @@ curl -N -X POST "http://localhost:8000/api/v1/knowledge-bases/{kb_id}/query/stre
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -d '{"query": "登录注册模块的演进历史是怎样的？"}'
-
-# 获取查询历史
-curl "http://localhost:8000/api/v1/knowledge-bases/{kb_id}/query-history?page=1&page_size=20"
-
-# 获取查询详情
-curl "http://localhost:8000/api/v1/query-history/{query_id}"
-
-# 删除查询历史
-curl -X DELETE "http://localhost:8000/api/v1/query-history/{query_id}"
 ```
 
 ---
@@ -543,4 +352,3 @@ const Citation = ({ data }) => {
 2. **去抖处理**: 用户输入时避免频繁触发查询
 3. **超时处理**: 设置30秒超时，超时后提示用户
 4. **错误重试**: 网络错误时自动重试1-2次
-5. **Token展示**: 实时展示Token消耗，帮助用户了解成本

@@ -32,7 +32,6 @@ def main():
         print("  - documents        (文档)")
         print("  - chunks           (文本/图片块)")
         print("  - sync_tasks       (同步任务)")
-        print("  - query_history    (查询历史)")
         print("=" * 60)
     except Exception as e:
         print(f"❌ 数据库初始化失败: {e}")

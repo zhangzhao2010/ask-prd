@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.errors import KnowledgeBaseNotFoundError
-from app.models.database import KnowledgeBase, Document, Chunk, QueryHistory
+from app.models.database import KnowledgeBase, Document, Chunk
 from app.utils.opensearch_client import opensearch_client
 from app.utils.bedrock_client import bedrock_client
 from app.utils.s3_client import s3_client
@@ -47,7 +47,6 @@ class QueryService:
             流式事件
         """
         query_id = str(uuid.uuid4())
-        start_time = datetime.now(datetime.timezone.utc)
 
         logger.info(
             "start_query_execution",
@@ -155,7 +154,6 @@ class QueryService:
             }
 
             main_agent = create_main_agent()
-            total_tokens = 0  # 初始化变量
 
             async for event in invoke_main_agent_stream(
                 agent=main_agent,
@@ -170,19 +168,7 @@ class QueryService:
                         "content": event.get("content", "")
                     }
                 elif event.get("type") == "complete":
-                    # 提取token统计（并更新外部变量）
-                    prompt_tokens = event.get("prompt_tokens", 0)
-                    completion_tokens = event.get("completion_tokens", 0)
-                    total_tokens = event.get("total_tokens", 0)  # 更新外部变量
-
-                    # 先发送tokens事件
-                    yield {
-                        "type": "tokens",
-                        "prompt_tokens": prompt_tokens,
-                        "completion_tokens": completion_tokens,
-                        "total_tokens": total_tokens
-                    }
-                    # 再发送done事件
+                    # 发送done事件
                     yield {
                         "type": "done",
                         "query_id": query_id
@@ -190,20 +176,9 @@ class QueryService:
                 else:
                     yield event
 
-            # Step 5: 保存查询历史
-            QueryService._save_query_history(
-                db=db,
-                query_id=query_id,
-                kb_id=kb_id,
-                query_text=query_text,
-                total_tokens=total_tokens,
-                start_time=start_time
-            )
-
             logger.info(
                 "query_execution_completed",
-                query_id=query_id,
-                total_tokens=total_tokens
+                query_id=query_id
             )
 
         except Exception as e:
@@ -487,55 +462,6 @@ class QueryService:
 
         return images
 
-    @staticmethod
-    def _save_query_history(
-        db: Session,
-        query_id: str,
-        kb_id: str,
-        query_text: str,
-        total_tokens: int,
-        start_time: datetime
-    ):
-        """
-        保存查询历史
-
-        Args:
-            db: 数据库会话
-            query_id: 查询ID
-            kb_id: 知识库ID
-            query_text: 查询文本
-            total_tokens: Token总数
-            start_time: 开始时间
-        """
-        try:
-            from datetime import timezone
-            response_time = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
-
-            history = QueryHistory(
-                id=query_id,
-                kb_id=kb_id,
-                query_text=query_text,
-                total_tokens=total_tokens,
-                response_time_ms=response_time,
-                status="completed",
-                created_at=start_time
-            )
-
-            db.add(history)
-            db.commit()
-
-            logger.info(
-                "query_history_saved",
-                query_id=query_id,
-                response_time_ms=response_time
-            )
-
-        except Exception as e:
-            logger.error(
-                "save_query_history_failed",
-                query_id=query_id,
-                error=str(e)
-            )
 
     @staticmethod
     async def execute_query_two_stage(
@@ -554,9 +480,7 @@ class QueryService:
         Yields:
             流式事件
         """
-        from datetime import timezone
         query_id = str(uuid.uuid4())
-        start_time = datetime.now(timezone.utc)
 
         logger.info(
             "start_two_stage_query",

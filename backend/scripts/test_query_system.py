@@ -59,20 +59,10 @@ def test_query_system():
 
         logger.info("\n=== 测试6: Schema模型验证 ===")
 
-        from app.models.schemas import (
-            QueryHistoryResponse,
-            QueryHistoryListResponse,
-            PaginationMeta
-        )
+        from app.models.schemas import PaginationMeta
         logger.info("✅ Query相关Schema导入成功")
 
-        logger.info("\n=== 测试7: 数据库模型验证 ===")
-
-        from app.models.database import QueryHistory
-        logger.info("✅ QueryHistory模型导入成功")
-        logger.info(f"   - 表名: {QueryHistory.__tablename__}")
-
-        logger.info("\n=== 测试8: API集成验证 ===")
+        logger.info("\n=== 测试7: API集成验证 ===")
 
         from app.api.v1 import api_router
         logger.info("✅ API路由聚合导入成功")
@@ -124,13 +114,6 @@ def test_query_system():
         logger.info("└─────────────────────────────────────────┘")
         logger.info("                   ↓")
         logger.info("┌─────────────────────────────────────────┐")
-        logger.info("│  6. 保存查询历史                         │")
-        logger.info("│     - 记录query_id、Token统计            │")
-        logger.info("│     - 响应时间                           │")
-        logger.info("│     - 状态                               │")
-        logger.info("└─────────────────────────────────────────┘")
-        logger.info("                   ↓")
-        logger.info("┌─────────────────────────────────────────┐")
         logger.info("│  返回给前端 (SSE事件流)                   │")
         logger.info("│  - event: status                         │")
         logger.info("│  - event: retrieved_documents            │")
@@ -140,8 +123,6 @@ def test_query_system():
 
         logger.info("\n已实现的API端点:")
         logger.info("✅ POST /api/v1/query/stream - 流式问答")
-        logger.info("✅ GET  /api/v1/query/history - 查询历史列表")
-        logger.info("✅ GET  /api/v1/query/history/{query_id} - 查询详情")
 
         logger.info("\n关键技术特性:")
         logger.info("📊 Hybrid Search: 向量检索 + BM25关键词检索")

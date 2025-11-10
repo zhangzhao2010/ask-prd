@@ -33,7 +33,6 @@ class KnowledgeBase(Base):
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
     chunks = relationship("Chunk", back_populates="knowledge_base", cascade="all, delete-orphan")
     sync_tasks = relationship("SyncTask", back_populates="knowledge_base", cascade="all, delete-orphan")
-    query_history = relationship("QueryHistory", back_populates="knowledge_base", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<KnowledgeBase(id={self.id}, name={self.name})>"
@@ -147,35 +146,3 @@ class SyncTask(Base):
 Index("idx_sync_tasks_kb_id", SyncTask.kb_id)
 Index("idx_sync_tasks_status", SyncTask.status)
 Index("idx_sync_tasks_created", SyncTask.created_at.desc())
-
-
-class QueryHistory(Base):
-    """查询历史表"""
-    __tablename__ = "query_history"
-
-    id = Column(String, primary_key=True)  # UUID格式
-    kb_id = Column(String, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
-    query_text = Column(Text, nullable=False)  # 用户原始问题
-    rewritten_queries = Column(Text)  # JSON数组，重写后的查询
-    retrieved_document_ids = Column(Text)  # JSON数组，检索到的文档ID列表
-    answer = Column(Text)  # 生成的完整答案
-    citations = Column(Text)  # JSON数组，引用信息
-    total_tokens = Column(Integer)  # 总Token消耗
-    prompt_tokens = Column(Integer)  # 提示词Token
-    completion_tokens = Column(Integer)  # 生成Token
-    response_time_ms = Column(Integer)  # 响应时间（毫秒）
-    status = Column(String, nullable=False, default="completed")  # completed | failed
-    error_message = Column(Text)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-
-    # 关系
-    knowledge_base = relationship("KnowledgeBase", back_populates="query_history")
-
-    def __repr__(self):
-        return f"<QueryHistory(id={self.id}, query={self.query_text[:50]}...)>"
-
-
-# 索引
-Index("idx_query_history_kb_id", QueryHistory.kb_id)
-Index("idx_query_history_created", QueryHistory.created_at.desc())
-Index("idx_query_history_status", QueryHistory.status)

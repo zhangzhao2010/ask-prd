@@ -40,7 +40,6 @@ knowledge_bases      -- 知识库表
 documents            -- 文档表
 chunks               -- 文本/图片块表（统一）
 sync_tasks           -- 同步任务表
-query_history        -- 查询历史表
 ```
 
 ---
@@ -331,84 +330,6 @@ CREATE INDEX idx_sync_tasks_created ON sync_tasks(created_at DESC);
 
 ---
 
-#### 2.2.5 query_history - 查询历史表
-
-```sql
-CREATE TABLE query_history (
-    id TEXT PRIMARY KEY,                    -- UUID格式
-    kb_id TEXT NOT NULL,                    -- 关联知识库ID
-    query_text TEXT NOT NULL,               -- 用户原始问题
-    rewritten_queries TEXT,                 -- JSON数组，重写后的查询
-    retrieved_document_ids TEXT,            -- JSON数组，检索到的文档ID列表
-    answer TEXT,                            -- 生成的完整答案
-    citations TEXT,                         -- JSON数组，引用信息
-    total_tokens INTEGER,                   -- 总Token消耗
-    prompt_tokens INTEGER,                  -- 提示词Token
-    completion_tokens INTEGER,              -- 生成Token
-    response_time_ms INTEGER,               -- 响应时间（毫秒）
-    status TEXT NOT NULL DEFAULT 'completed', -- completed | failed
-    error_message TEXT,                     -- 错误信息
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (kb_id) REFERENCES knowledge_bases(id) ON DELETE CASCADE
-);
-
--- 索引
-CREATE INDEX idx_query_history_kb_id ON query_history(kb_id);
-CREATE INDEX idx_query_history_created ON query_history(created_at DESC);
-CREATE INDEX idx_query_history_status ON query_history(status);
-```
-
-**字段说明**：
-- `rewritten_queries`: JSON数组，如 `["改写后的问题1", "改写后的问题2"]`
-- `retrieved_document_ids`: JSON数组，如 `["doc-xxx", "doc-yyy"]`
-- `citations`: JSON数组，结构见下方
-
-**Citations JSON结构**：
-```json
-[
-    {
-        "chunk_id": "chunk-770e8400-e29b-41d4-a716-446655440002",
-        "chunk_type": "text",
-        "document_id": "doc-660e8400-e29b-41d4-a716-446655440001",
-        "document_name": "PRD_登录注册_v1.2.pdf",
-        "content": "v1.0版本支持手机号+短信验证码登录...",
-        "chunk_index": 5
-    },
-    {
-        "chunk_id": "chunk-880e8400-e29b-41d4-a716-446655440003",
-        "chunk_type": "image",
-        "document_id": "doc-660e8400-e29b-41d4-a716-446655440001",
-        "document_name": "PRD_登录注册_v1.2.pdf",
-        "image_url": "/api/chunks/chunk-880e8400/image",
-        "image_description": "这是一张登录流程图...",
-        "chunk_index": 6
-    }
-]
-```
-
-**示例数据**：
-```json
-{
-    "id": "query-aa0e8400-e29b-41d4-a716-446655440005",
-    "kb_id": "kb-550e8400-e29b-41d4-a716-446655440000",
-    "query_text": "登录注册模块的演进历史是怎样的？",
-    "rewritten_queries": "[\"登录功能的版本迭代\", \"用户认证模块发展历程\"]",
-    "retrieved_document_ids": "[\"doc-660e8400\", \"doc-770e8400\"]",
-    "answer": "根据检索到的文档，登录注册模块经历了以下演进...",
-    "citations": "[{\"chunk_id\": \"chunk-770e8400\", \"chunk_type\": \"text\", ...}]",
-    "total_tokens": 15800,
-    "prompt_tokens": 15000,
-    "completion_tokens": 800,
-    "response_time_ms": 8500,
-    "status": "completed",
-    "error_message": null,
-    "created_at": "2025-01-20T11:00:00Z"
-}
-```
-
----
-
 ## 三、OpenSearch Index设计
 
 ### 3.1 Index Mapping
@@ -590,16 +511,7 @@ WHERE document_id = ?
 ORDER BY chunk_index ASC;
 ```
 
-**查询3：查询历史（带分页）**
-```sql
-SELECT id, query_text, total_tokens, created_at
-FROM query_history
-WHERE kb_id = ?
-ORDER BY created_at DESC
-LIMIT ? OFFSET ?;
-```
-
-**查询4：正在运行的同步任务**
+**查询3：正在运行的同步任务**
 ```sql
 SELECT id, progress, current_step, total_documents, processed_documents
 FROM sync_tasks
@@ -634,7 +546,7 @@ def migrate_to_rds():
     # 迁移表结构（需调整SQLite特有语法）
     # 迁移数据
     tables = ['knowledge_bases', 'documents', 'chunks',
-              'sync_tasks', 'query_history']
+              'sync_tasks']
 
     for table in tables:
         rows = sqlite_conn.execute(f"SELECT * FROM {table}").fetchall()
@@ -652,12 +564,6 @@ def migrate_to_rds():
 ## 七、维护建议
 
 ### 7.1 定期清理
-
-**清理历史查询**（保留最近3个月）：
-```sql
-DELETE FROM query_history
-WHERE created_at < datetime('now', '-3 months');
-```
 
 **清理已完成的同步任务**（保留最近1个月）：
 ```sql
@@ -680,17 +586,6 @@ LEFT JOIN documents d ON kb.id = d.kb_id
 LEFT JOIN chunks c ON d.id = c.document_id
 WHERE kb.status = 'active'
 GROUP BY kb.id;
-
--- Token消耗统计
-SELECT
-    DATE(created_at) as date,
-    COUNT(*) as query_count,
-    SUM(total_tokens) as total_tokens,
-    AVG(total_tokens) as avg_tokens
-FROM query_history
-WHERE created_at >= datetime('now', '-30 days')
-GROUP BY DATE(created_at)
-ORDER BY date DESC;
 ```
 
 ---

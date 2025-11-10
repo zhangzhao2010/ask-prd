@@ -228,36 +228,6 @@ class CitationItem(BaseModel):
     image_url: Optional[str]  # 图片URL（如果是图片chunk）
 
 
-class QueryResponse(BaseModel):
-    """查询响应（非流式）"""
-    query_id: str
-    query_text: str
-    answer: str
-    citations: List[CitationItem]
-    total_tokens: int
-    prompt_tokens: int
-    completion_tokens: int
-    response_time_ms: int
-
-
-class QueryHistoryResponse(BaseResponse):
-    """查询历史响应"""
-    id: str
-    kb_id: str
-    query_text: str
-    answer: Optional[str]
-    total_tokens: Optional[int]
-    response_time_ms: Optional[int]
-    status: str  # completed | failed
-    created_at: datetime
-
-
-class QueryHistoryListResponse(BaseModel):
-    """查询历史列表响应"""
-    items: List[QueryHistoryResponse]
-    meta: PaginationMeta
-
-
 # ============ 流式输出事件模型 ============
 
 class StreamEvent(BaseModel):

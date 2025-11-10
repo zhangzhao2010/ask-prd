@@ -40,9 +40,8 @@ ASK-PRD 是一个基于PRD文档的智能检索问答系统（Demo项目），�
        - 支持多模态输入（文本+图片）
      - Main Agent：另一个Strands Agent实例，综合所有Sub-Agent的结果生成最终答案
        - 使用BedrockModel的流式API
-       - 自动收集Token统计（通过AgentResult.metrics）
    - 自定义Orchestration：使用asyncio并发执行Sub-Agents，通过Semaphore限制并发数
-   - 流式输出：Strands原生支持streaming，通过SSE推送答案和引用
+   - 流式输出：通过SSE推送答案和引用
 
 ### 关键设计决策
 
@@ -206,7 +205,7 @@ aws configure
 
 ## 数据库架构
 
-### SQLite表结构（5张核心表）
+### SQLite表结构（4张核心表）
 
 - `knowledge_bases`: 知识库元数据，关联S3和OpenSearch
 - `documents`: 文档元数据，记录PDF和转换后的Markdown路径
@@ -214,7 +213,6 @@ aws configure
 - `chunks`: 统一的文本/图片块表，通过`chunk_type`字段区分（'text' | 'image'）
   - 图片chunk包含：`image_s3_key`（S3路径）和`image_local_path`（本地缓存路径）
 - `sync_tasks`: 异步同步任务，管理PDF处理流程
-- `query_history`: 查询历史和Token统计
 
 **路径管理原则**：
 - **S3路径**：必须存储，是唯一真实数据源

@@ -312,14 +312,7 @@ class TwoStageExecutor:
             # 完成
             yield {
                 "type": "done",
-                "data": {
-                    "tokens": {
-                        # TODO: 收集Token统计
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0
-                    }
-                }
+                "data": {}
             }
 
             logger.info(
