@@ -35,16 +35,12 @@ class KnowledgeBaseCreate(BaseModel):
     """创建知识库请求"""
     name: str = Field(..., min_length=1, max_length=100, description="知识库名称")
     description: Optional[str] = Field(None, max_length=500, description="描述信息")
-    s3_bucket: str = Field(..., description="S3桶名")
-    s3_prefix: str = Field(..., description="S3路径前缀，必须以/结尾")
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "name": "产品PRD知识库",
-                "description": "包含产品迭代的所有PRD文档",
-                "s3_bucket": "my-bucket",
-                "s3_prefix": "prds/product-a/"
+                "description": "包含产品迭代的所有PRD文档"
             }
         }
     )
@@ -61,8 +57,7 @@ class KnowledgeBaseResponse(BaseResponse):
     id: str
     name: str
     description: Optional[str]
-    s3_bucket: str
-    s3_prefix: str
+    local_storage_path: Optional[str]
     opensearch_collection_id: Optional[str]
     opensearch_index_name: Optional[str]
     status: str
@@ -95,8 +90,9 @@ class DocumentResponse(BaseResponse):
     id: str
     kb_id: str
     filename: str
-    s3_key: str
-    s3_key_markdown: Optional[str]
+    local_pdf_path: Optional[str]
+    local_markdown_path: Optional[str]
+    local_text_markdown_path: Optional[str]
     file_size: Optional[int]
     page_count: Optional[int]
     status: str  # uploaded | processing | completed | failed
@@ -121,14 +117,14 @@ class DocumentCreate(BaseModel):
     kb_id: str
     filename: str
     file_size: int
-    s3_key: str
+    local_pdf_path: str
 
 
 class DocumentUpdate(BaseModel):
     """文档更新请求"""
     status: Optional[str] = None
-    s3_key_markdown: Optional[str] = None
     local_markdown_path: Optional[str] = None
+    local_text_markdown_path: Optional[str] = None
     error_message: Optional[str] = None
 
 
@@ -136,7 +132,7 @@ class DocumentUploadResponse(BaseModel):
     """文档上传响应"""
     document_id: str
     filename: str
-    s3_key: str
+    local_pdf_path: str
     file_size: int
     message: str = "文档上传成功"
 

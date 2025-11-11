@@ -4,7 +4,7 @@ PDF转换服务
 """
 import base64
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 from sqlalchemy.orm import Session
 
 from marker.models import create_model_dict
@@ -18,7 +18,6 @@ from app.core.errors import (
     PDFConversionError
 )
 from app.models.database import Document
-from app.utils.s3_client import s3_client
 from app.utils.bedrock_client import bedrock_client
 
 logger = get_logger(__name__)
@@ -31,7 +30,8 @@ class ConversionService:
     def convert_pdf_to_markdown(
         db: Session,
         document_id: str,
-        pdf_local_path: str
+        pdf_local_path: str,
+        output_dir: Optional[Path] = None
     ) -> Tuple[str, List[Dict]]:
         """
         转换PDF为Markdown并提取图片
@@ -40,6 +40,7 @@ class ConversionService:
             db: 数据库会话
             document_id: 文档ID
             pdf_local_path: PDF本地路径
+            output_dir: 可选的输出目录，默认使用cache目录
 
         Returns:
             (markdown_content, images_info)
@@ -66,8 +67,9 @@ class ConversionService:
         db.commit()
 
         try:
-            # 创建临时输出目录
-            output_dir = Path(settings.cache_dir) / "conversions" / document_id
+            # 创建输出目录（使用传入的output_dir或默认的cache目录）
+            if output_dir is None:
+                output_dir = Path(settings.cache_dir) / "conversions" / document_id
             output_dir.mkdir(parents=True, exist_ok=True)
 
             # 使用Marker转换PDF
@@ -134,6 +136,7 @@ class ConversionService:
     ) -> List[Dict]:
         """
         处理从text_from_rendered返回的图片字典
+        图片直接保存到output_dir（与markdown同级目录）
 
         Args:
             images_dict: 图片字典，键是文件名（如'_page_1_Figure_8.jpeg'），值是PIL Image对象
@@ -144,8 +147,6 @@ class ConversionService:
             图片信息列表
         """
         images_info = []
-        images_dir = output_dir / "images"
-        images_dir.mkdir(exist_ok=True)
 
         if not images_dict:
             logger.info("no_images_found", document_id=document_id)
@@ -159,10 +160,9 @@ class ConversionService:
 
         for idx, (original_filename, pil_image) in enumerate(images_dict.items()):
             try:
-                # 保留原始文件名，或者生成新的
-                # 原始文件名格式: '_page_1_Figure_8.jpeg'
-                img_filename = original_filename.lstrip('_')  # 去掉开头的下划线
-                img_path = images_dir / img_filename
+                img_filename = original_filename
+                # 图片直接保存到output_dir，与markdown同目录
+                img_path = output_dir / img_filename
 
                 # 保存PIL Image对象
                 pil_image.save(img_path)
@@ -311,99 +311,223 @@ class ConversionService:
             return f"图片 {filename}（分析失败）"
 
     @staticmethod
-    def upload_conversion_results(
-        db: Session,
-        document_id: str,
-        markdown_content: str,
-        images_info: List[Dict]
-    ) -> Tuple[str, List[str]]:
+    def _parse_markdown_content(markdown_text: str, doc_dir: str) -> List[Dict]:
         """
-        上传转换结果到S3
-
-        Args:
-            db: 数据库会话
-            document_id: 文档ID
-            markdown_content: Markdown内容
-            images_info: 图片信息列表
+        解析markdown为文本块和图片块的序列
 
         Returns:
-            (markdown_s3_key, image_s3_keys)
-
-        Raises:
-            DocumentNotFoundError: 文档不存在
+            [
+                {"type": "text", "content": "段落1..."},
+                {"type": "image", "filename": "img1.png", "path": "/path/to/img1.png"},
+                ...
+            ]
         """
-        logger.info(
-            "start_uploading_conversion_results",
-            document_id=document_id,
-            images_count=len(images_info)
-        )
+        import re
+        import os
 
-        # 获取文档信息
-        doc = db.query(Document).filter(Document.id == document_id).first()
-        if not doc:
-            raise DocumentNotFoundError(document_id)
+        content_sequence = []
 
-        kb_prefix = doc.knowledge_base.s3_prefix
+        # 按图片引用分割markdown
+        pattern = r'!\[\]\(([^)]+\.(?:jpeg|jpg|png|gif|webp))\)'
+        parts = re.split(pattern, markdown_text)
 
-        try:
-            # 1. 上传Markdown文件
-            markdown_s3_key = f"{kb_prefix}converted/{document_id}/content.md"
+        for i, part in enumerate(parts):
+            if i % 2 == 0:  # 文本部分
+                if part.strip():
+                    content_sequence.append({
+                        "type": "text",
+                        "content": part.strip()
+                    })
+            else:  # 图片文件名
+                img_filename = part
+                img_path = os.path.join(doc_dir, img_filename)
+                content_sequence.append({
+                    "type": "image",
+                    "filename": img_filename,
+                    "path": img_path,
+                    "description": None,
+                    "figure_type": None
+                })
 
-            # 创建临时文件
-            temp_md_path = Path(settings.cache_dir) / "temp" / f"{document_id}.md"
-            temp_md_path.parent.mkdir(parents=True, exist_ok=True)
-            temp_md_path.write_text(markdown_content, encoding="utf-8")
+        return content_sequence
 
-            # 上传到S3
-            s3_client.upload_file_from_path(str(temp_md_path), markdown_s3_key)
+    @staticmethod
+    def _generate_descriptions_with_context(content_sequence: List[Dict], document_id: str) -> None:
+        """
+        按顺序生成图片描述，传入上下文
+        """
+        for i, item in enumerate(content_sequence):
+            if item["type"] != "image":
+                continue
 
-            logger.info(
-                "markdown_uploaded",
-                document_id=document_id,
-                s3_key=markdown_s3_key
-            )
+            # 获取上文（最多500字符）
+            context_before = ""
+            if i > 0:
+                prev_item = content_sequence[i - 1]
+                if prev_item["type"] == "text":
+                    context_before = prev_item["content"][-500:]
+                elif prev_item["type"] == "image" and prev_item.get("description"):
+                    context_before = f"[上一张图片] {prev_item['description'][:200]}"
 
-            # 2. 上传图片
-            image_s3_keys = []
-            for img_info in images_info:
-                img_filename = img_info["filename"]
-                img_local_path = img_info["path"]
+            # 获取下文（最多500字符）
+            context_after = ""
+            if i < len(content_sequence) - 1:
+                next_item = content_sequence[i + 1]
+                if next_item["type"] == "text":
+                    context_after = next_item["content"][:500]
 
-                img_s3_key = f"{kb_prefix}converted/{document_id}/images/{img_filename}"
-
-                # 上传图片
-                s3_client.upload_file_from_path(img_local_path, img_s3_key)
-                image_s3_keys.append(img_s3_key)
-
-                logger.debug(
-                    "image_uploaded",
-                    document_id=document_id,
-                    filename=img_filename,
-                    s3_key=img_s3_key
+            # 调用Vision API
+            try:
+                description_result = ConversionService._generate_image_description_with_context(
+                    img_path=item["path"],
+                    context_before=context_before,
+                    context_after=context_after
                 )
 
-            # 3. 更新文档记录
-            doc.s3_key_markdown = markdown_s3_key
-            doc.local_markdown_path = str(temp_md_path)  # 保存本地缓存路径
-            db.commit()
+                item["description"] = description_result["description"]
+                item["figure_type"] = description_result["figure_type"]
 
-            logger.info(
-                "conversion_results_uploaded",
-                document_id=document_id,
-                markdown_s3_key=markdown_s3_key,
-                images_count=len(image_s3_keys)
+                logger.info(
+                    "image_description_generated_with_context",
+                    document_id=document_id,
+                    filename=item["filename"],
+                    figure_type=item["figure_type"]
+                )
+            except Exception as e:
+                logger.error(
+                    "image_description_with_context_failed",
+                    document_id=document_id,
+                    filename=item["filename"],
+                    error=str(e)
+                )
+                # 使用默认描述
+                item["description"] = f"图片 {item['filename']}"
+                item["figure_type"] = "Other"
+
+    @staticmethod
+    def _generate_image_description_with_context(
+        img_path: str,
+        context_before: str,
+        context_after: str
+    ) -> Dict[str, str]:
+        """
+        调用Bedrock Vision API，传入上下文
+        """
+        import re
+
+        with open(img_path, 'rb') as f:
+            img_bytes = f.read()
+
+        img_base64 = base64.b64encode(img_bytes).decode()
+
+        # 构建带上下文的prompt
+        prompt = f"""你正在阅读一份产品文档，需要理解文档中的图片。
+
+【上文】
+{context_before if context_before else "（文档开头）"}
+
+【当前图片】
+[请分析下方图片]
+
+【下文】
+{context_after if context_after else "（文档结尾）"}
+
+请结合上下文，详细描述这张图片的内容、类型和作用。
+
+首先判断图片类型（Chart/Diagram/Logo/Icon/Natural Image/Screenshot/Other），
+然后生成详细描述，包括：
+- 图片的主要内容
+- 图片在文档中的作用
+- 关键信息和细节
+
+输出格式：
+<figure>
+<figure_type>图片类型</figure_type>
+<figure_description>详细描述...</figure_description>
+</figure>
+"""
+
+        response = bedrock_client.analyze_image(
+            image_base64=img_base64,
+            prompt=prompt,
+            media_type="image/png",
+            max_tokens=1000,
+            temperature=0.3
+        )
+
+        # 解析响应
+        figure_type_match = re.search(r'<figure_type>(.*?)</figure_type>', response, re.DOTALL)
+        description_match = re.search(r'<figure_description>(.*?)</figure_description>', response, re.DOTALL)
+
+        figure_type = figure_type_match.group(1).strip() if figure_type_match else "Other"
+        description = description_match.group(1).strip() if description_match else response
+
+        return {
+            "figure_type": figure_type,
+            "description": description
+        }
+
+    @staticmethod
+    def generate_and_replace_images(
+        markdown_content: str,
+        doc_dir: str,
+        document_id: str
+    ) -> str:
+        """
+        生成图片描述并替换markdown中的图片引用（带上下文）
+
+        Returns:
+            替换后的markdown文本
+        """
+        import re
+        import os
+
+        logger.info(
+            "start_generate_and_replace_images",
+            document_id=document_id
+        )
+
+        # 1. 解析markdown为内容序列
+        content_sequence = ConversionService._parse_markdown_content(
+            markdown_content, doc_dir
+        )
+
+        # 2. 按顺序生成图片描述（带上下文）
+        ConversionService._generate_descriptions_with_context(content_sequence, document_id)
+
+        # 3. 替换markdown中的图片引用
+        def replace_image(match):
+            img_ref = match.group(1)  # xxx.png
+            img_filename = os.path.basename(img_ref)
+
+            # 从content_sequence中查找图片信息
+            img_item = next(
+                (item for item in content_sequence
+                 if item["type"] == "image" and item["filename"] == img_filename),
+                None
             )
 
-            return markdown_s3_key, image_s3_keys
+            if not img_item or not img_item.get("description"):
+                return match.group(0)
 
-        except Exception as e:
-            logger.error(
-                "upload_conversion_results_failed",
-                document_id=document_id,
-                error=str(e),
-                exc_info=True
+            # 构建替换文本
+            return (
+                f"\n[IMAGE:{img_ref}]\n"
+                f"<figure>\n"
+                f"<figure_type>{img_item['figure_type']}</figure_type>\n"
+                f"<figure_description>{img_item['description']}</figure_description>\n"
+                f"</figure>\n"
             )
-            raise
+
+        pattern = r'!\[\]\(([^)]+\.(?:jpeg|jpg|png|gif|webp))\)'
+        replaced = re.sub(pattern, replace_image, markdown_content)
+
+        logger.info(
+            "generate_and_replace_images_completed",
+            document_id=document_id
+        )
+
+        return replaced
 
     @staticmethod
     def cleanup_temp_files(document_id: str):

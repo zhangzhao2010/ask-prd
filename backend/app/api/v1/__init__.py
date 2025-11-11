@@ -1,7 +1,7 @@
 """
 API v1路由聚合
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from app.api.v1.knowledge_bases.routes import router as kb_router
 from app.api.v1.documents.routes import router as doc_router
 from app.api.v1.sync_tasks.routes import router as sync_router
@@ -57,5 +57,37 @@ async def api_root():
             "documents": "/api/v1/documents",
             "sync_tasks": "/api/v1/sync-tasks",
             "query": "/api/v1/query",
+        }
+    }
+
+
+@api_router.get("/debug/ip", tags=["系统"])
+async def get_client_ip(request: Request):
+    """
+    调试接口：返回访问者的IP地址
+
+    支持多种方式获取真实IP：
+    - X-Forwarded-For: 代理服务器传递的原始客户端IP
+    - X-Real-IP: Nginx等反向代理传递的真实IP
+    - client.host: 直接连接的客户端IP
+    """
+    # 获取各种可能的IP来源
+    x_forwarded_for = request.headers.get("X-Forwarded-For")
+    x_real_ip = request.headers.get("X-Real-IP")
+    client_host = request.client.host if request.client else None
+
+    # X-Forwarded-For可能包含多个IP，取第一个（最原始的客户端IP）
+    forwarded_ip = x_forwarded_for.split(",")[0].strip() if x_forwarded_for else None
+
+    # 优先级：X-Real-IP > X-Forwarded-For第一个 > client.host
+    real_ip = x_real_ip or forwarded_ip or client_host
+
+    return {
+        "real_ip": real_ip,
+        "details": {
+            "x_forwarded_for": x_forwarded_for,
+            "x_real_ip": x_real_ip,
+            "client_host": client_host,
+            "all_headers": dict(request.headers)
         }
     }

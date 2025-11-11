@@ -27,6 +27,7 @@ function QueryPageContent() {
   const [isQuerying, setIsQuerying] = useState(false);
   const [answer, setAnswer] = useState('');
   const [citations, setCitations] = useState<CitationItem[]>([]);
+  const [processedAnswer, setProcessedAnswer] = useState('');
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const answerRef = useRef<HTMLDivElement>(null);
@@ -44,6 +45,30 @@ function QueryPageContent() {
   useEffect(() => {
     loadKnowledgeBases();
   }, []);
+
+  // 处理答案中的图片引用标记，替换为实际的Markdown图片语法
+  useEffect(() => {
+    if (!answer) {
+      setProcessedAnswer('');
+      return;
+    }
+
+    let processed = answer;
+
+    // 如果有citations数据，替换图片标记
+    if (citations.length > 0) {
+      citations.forEach((citation) => {
+        if (citation.chunk_type === 'image' && citation.image_url) {
+          // 将 [DOC-xxx-IMAGE-X] 替换为 ![图片](url)
+          const pattern = new RegExp(`\\[${citation.chunk_id}\\]`, 'g');
+          const imageAlt = citation.content || '图片';
+          processed = processed.replace(pattern, `![${imageAlt}](${citation.image_url})`);
+        }
+      });
+    }
+
+    setProcessedAnswer(processed);
+  }, [answer, citations]);
 
   // 处理SSE流式输出
   const handleQuery = async () => {
@@ -63,8 +88,21 @@ function QueryPageContent() {
       let buffer = '';
 
       while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        let result;
+        try {
+          result = await reader.read();
+        } catch (readError) {
+          console.error('Stream read error:', readError);
+          // 流读取错误，可能是连接中断
+          setStatus('连接中断');
+          break;
+        }
+
+        const { done, value } = result;
+        if (done) {
+          // 流正常结束
+          break;
+        }
 
         // 解码数据
         buffer += decoder.decode(value, { stream: true });
@@ -145,9 +183,17 @@ function QueryPageContent() {
           }
         }
       }
+
+      // 流正常结束，确保状态更新
+      if (status === '正在处理...') {
+        setStatus('完成');
+      }
     } catch (error: any) {
+      console.error('Query error:', error);
       setError(error.message || '查询失败');
       setStatus('错误');
+    } finally {
+      // 确保总是停止loading状态
       setIsQuerying(false);
     }
   };
@@ -244,7 +290,7 @@ function QueryPageContent() {
         >
           <div ref={answerRef} className="markdown-content">
             <ReactMarkdown>
-              {answer}
+              {processedAnswer || answer}
             </ReactMarkdown>
           </div>
         </Container>

@@ -23,8 +23,6 @@ export interface PaginationMeta {
 export interface KnowledgeBaseCreate {
   name: string;
   description?: string;
-  s3_bucket: string;
-  s3_prefix: string;
 }
 
 export interface KnowledgeBaseUpdate {
@@ -36,8 +34,7 @@ export interface KnowledgeBase {
   id: string;
   name: string;
   description?: string;
-  s3_bucket: string;
-  s3_prefix: string;
+  local_storage_path?: string;
   opensearch_collection_id?: string;
   opensearch_index_name?: string;
   status: string;
@@ -66,8 +63,9 @@ export interface Document {
   id: string;
   kb_id: string;
   filename: string;
-  s3_key: string;
-  s3_key_markdown?: string;
+  local_pdf_path?: string;
+  local_markdown_path?: string;
+  local_text_markdown_path?: string;
   file_size?: number;
   page_count?: number;
   status: 'uploaded' | 'processing' | 'completed' | 'failed';
@@ -88,7 +86,7 @@ export interface DocumentListResponse {
 export interface DocumentUploadResponse {
   document_id: string;
   filename: string;
-  s3_key: string;
+  local_pdf_path: string;
   file_size: number;
   message: string;
 }

@@ -9,8 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.logging import get_logger
-from app.models.database import Chunk
-from app.utils.s3_client import s3_client
+from app.models.database import Chunk, Document
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -22,9 +21,9 @@ async def get_chunk_image(
     db: Session = Depends(get_db)
 ):
     """
-    获取chunk的图片
+    获取chunk的图片（从本地文件系统）
 
-    - 支持从本地缓存或S3获取图片
+    - 图片存储在 markdowns/{document_id}/ 目录
     - 返回图片文件
     """
     logger.info("api_get_chunk_image", chunk_id=chunk_id)
@@ -40,40 +39,34 @@ async def get_chunk_image(
         logger.error("chunk_not_image", chunk_id=chunk_id, chunk_type=chunk.chunk_type)
         raise HTTPException(status_code=400, detail=f"Chunk不是图片类型: {chunk.chunk_type}")
 
-    # 尝试从本地缓存获取
-    if chunk.image_local_path:
-        local_path = Path(chunk.image_local_path)
-        if local_path.exists():
-            logger.info("serving_image_from_cache", chunk_id=chunk_id, path=str(local_path))
-            return FileResponse(
-                path=str(local_path),
-                media_type="image/png",  # 根据实际类型调整
-                filename=chunk.image_filename or f"{chunk_id}.png"
-            )
+    # 获取文档的markdown路径
+    doc = db.query(Document).filter(Document.id == chunk.document_id).first()
+    if not doc or not doc.local_markdown_path:
+        logger.error("document_not_found", chunk_id=chunk_id, document_id=chunk.document_id)
+        raise HTTPException(status_code=404, detail="文档不存在")
 
-    # 从S3下载
-    if chunk.image_s3_key:
-        try:
-            import tempfile
-            temp_file = Path(tempfile.gettempdir()) / f"{chunk_id}_{chunk.image_filename}"
+    # 构建图片路径（与markdown同目录）
+    markdown_dir = Path(doc.local_markdown_path).parent
+    image_path = markdown_dir / chunk.image_filename
 
-            logger.info("downloading_image_from_s3", chunk_id=chunk_id, s3_key=chunk.image_s3_key)
-            s3_client.download_file(chunk.image_s3_key, str(temp_file))
+    if not image_path.exists():
+        logger.error("image_not_found", chunk_id=chunk_id, path=str(image_path))
+        raise HTTPException(status_code=404, detail="图片文件不存在")
 
-            # 更新本地缓存路径（可选）
-            # chunk.image_local_path = str(temp_file)
-            # db.commit()
+    # 判断Content-Type
+    ext = chunk.image_filename.split('.')[-1].lower()
+    content_type_map = {
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'gif': 'image/gif',
+        'webp': 'image/webp'
+    }
+    content_type = content_type_map.get(ext, 'application/octet-stream')
 
-            return FileResponse(
-                path=str(temp_file),
-                media_type="image/png",
-                filename=chunk.image_filename or f"{chunk_id}.png"
-            )
-
-        except Exception as e:
-            logger.error("download_image_failed", chunk_id=chunk_id, error=str(e), exc_info=True)
-            raise HTTPException(status_code=500, detail=f"下载图片失败: {str(e)}")
-
-    # 无法获取图片
-    logger.error("image_not_available", chunk_id=chunk_id)
-    raise HTTPException(status_code=404, detail="图片文件不可用")
+    logger.info("serving_image", chunk_id=chunk_id, path=str(image_path))
+    return FileResponse(
+        path=str(image_path),
+        media_type=content_type,
+        filename=chunk.image_filename or f"{chunk_id}.png"
+    )

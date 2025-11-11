@@ -173,7 +173,7 @@ function DocumentsPageContent() {
   const statusBadge = (status: string) => {
     const statusMap: Record<string, { text: string; color: any }> = {
       uploaded: { text: '已上传', color: 'blue' },
-      processing: { text: '处理中', color: 'in-progress' },
+      processing: { text: '处理中', color: 'blue' },
       completed: { text: '已完成', color: 'green' },
       failed: { text: '失败', color: 'red' },
     };
@@ -343,11 +343,11 @@ function DocumentsPageContent() {
               cell: (item) => item.page_count || '-',
             },
             {
-              id: 's3_key',
-              header: 'S3路径',
+              id: 'local_path',
+              header: '本地路径',
               cell: (item) => (
                 <Box fontSize="body-s" color="text-body-secondary">
-                  {item.s3_key}
+                  {item.local_pdf_path || '本地存储'}
                 </Box>
               ),
             },

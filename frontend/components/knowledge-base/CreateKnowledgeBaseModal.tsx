@@ -28,8 +28,6 @@ export default function CreateKnowledgeBaseModal({
   const [formData, setFormData] = useState<KnowledgeBaseCreate>({
     name: '',
     description: '',
-    s3_bucket: '',
-    s3_prefix: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -39,16 +37,6 @@ export default function CreateKnowledgeBaseModal({
 
     if (!formData.name.trim()) {
       newErrors.name = '请输入知识库名称';
-    }
-
-    if (!formData.s3_bucket.trim()) {
-      newErrors.s3_bucket = '请输入S3桶名';
-    }
-
-    if (!formData.s3_prefix.trim()) {
-      newErrors.s3_prefix = '请输入S3路径前缀';
-    } else if (!formData.s3_prefix.endsWith('/')) {
-      newErrors.s3_prefix = 'S3路径前缀必须以 / 结尾';
     }
 
     setErrors(newErrors);
@@ -69,8 +57,6 @@ export default function CreateKnowledgeBaseModal({
       setFormData({
         name: '',
         description: '',
-        s3_bucket: '',
-        s3_prefix: '',
       });
       setErrors({});
     } catch (error: any) {
@@ -122,30 +108,6 @@ export default function CreateKnowledgeBaseModal({
             onChange={(e) => setFormData({ ...formData, description: e.detail.value })}
             placeholder="例如：包含产品迭代的所有PRD文档"
             rows={3}
-          />
-        </FormField>
-
-        <FormField
-          label="S3桶名"
-          errorText={errors.s3_bucket}
-          description="存储文档的S3桶"
-        >
-          <Input
-            value={formData.s3_bucket}
-            onChange={(e) => setFormData({ ...formData, s3_bucket: e.detail.value })}
-            placeholder="例如：my-prd-bucket"
-          />
-        </FormField>
-
-        <FormField
-          label="S3路径前缀"
-          errorText={errors.s3_prefix}
-          description="S3路径前缀，必须以 / 结尾"
-        >
-          <Input
-            value={formData.s3_prefix}
-            onChange={(e) => setFormData({ ...formData, s3_prefix: e.detail.value })}
-            placeholder="例如：prds/product-a/"
           />
         </FormField>
 

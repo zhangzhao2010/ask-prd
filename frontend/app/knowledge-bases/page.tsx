@@ -130,11 +130,11 @@ export default function KnowledgeBasesPage() {
               cell: (item) => statusBadge(item.status),
             },
             {
-              id: 's3_location',
-              header: 'S3位置',
+              id: 'storage_path',
+              header: '存储路径',
               cell: (item) => (
                 <Box fontSize="body-s" color="text-body-secondary">
-                  s3://{item.s3_bucket}/{item.s3_prefix}
+                  {item.local_storage_path || '本地存储'}
                 </Box>
               ),
             },

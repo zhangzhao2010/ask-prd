@@ -2,6 +2,7 @@
 应用配置模块
 使用pydantic-settings管理配置
 """
+import os
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,9 +22,6 @@ class Settings(BaseSettings):
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
 
-    # S3配置
-    s3_bucket: str
-
     # OpenSearch配置
     opensearch_endpoint: str
 
@@ -32,8 +30,11 @@ class Settings(BaseSettings):
     embedding_model_id: str = "amazon.titan-embed-text-v2:0"
     generation_model_id: str = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
+    # 本地存储配置
+    data_dir: str = "./data"
+
     # 数据库配置
-    database_path: str = "./data/aks-prd.db"
+    database_path: str = "./data/ask-prd.db"
 
     # 缓存配置
     cache_dir: str = "./data/cache"
@@ -45,6 +46,9 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
 
+    # 查询配置
+    max_retrieval_docs: int = 20  # 检索的最大文档数
+
     # Marker配置
     marker_use_gpu: bool = True
 
@@ -52,6 +56,21 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """SQLite数据库连接URL"""
         return f"sqlite:///{self.database_path}"
+
+    @property
+    def pdf_dir(self) -> str:
+        """PDF存储目录"""
+        return os.path.join(self.data_dir, "documents", "pdfs")
+
+    @property
+    def markdown_dir(self) -> str:
+        """Markdown存储目录"""
+        return os.path.join(self.data_dir, "documents", "markdowns")
+
+    @property
+    def text_markdown_dir(self) -> str:
+        """纯文本Markdown存储目录"""
+        return os.path.join(self.data_dir, "documents", "text_markdowns")
 
 
 # 全局配置实例

@@ -15,7 +15,6 @@ from app.services.task_service import task_service
 from app.services.conversion_service import conversion_service
 from app.services.chunking_service import chunking_service
 from app.services.embedding_service import embedding_service
-from app.utils.s3_client import s3_client
 
 logger = get_logger(__name__)
 
@@ -184,28 +183,30 @@ class SyncWorker:
         try:
             logger.info("start_document_processing", document_id=document_id)
 
-            # Step 1: 下载PDF from S3
-            logger.info("downloading_pdf", document_id=document_id)
-
-            pdf_s3_key = document.s3_key
-            pdf_local_path = Path(settings.cache_dir) / "pdfs" / f"{document_id}.pdf"
-            pdf_local_path.parent.mkdir(parents=True, exist_ok=True)
-
-            s3_client.download_file(pdf_s3_key, str(pdf_local_path))
+            # Step 1: 获取本地PDF路径
+            pdf_local_path = document.local_pdf_path
+            if not pdf_local_path or not Path(pdf_local_path).exists():
+                raise FileNotFoundError(f"PDF file not found: {pdf_local_path}")
 
             logger.info(
-                "pdf_downloaded",
+                "pdf_path_verified",
                 document_id=document_id,
-                local_path=str(pdf_local_path)
+                local_path=pdf_local_path
             )
 
-            # Step 2: PDF → Markdown
+            # Step 2: PDF → Markdown + 图片提取
+            # 创建markdown输出目录（markdown和图片保存在同一目录）
+            markdown_dir = Path(settings.markdown_dir) / document_id
+            markdown_dir.mkdir(parents=True, exist_ok=True)
+
             logger.info("converting_pdf", document_id=document_id)
 
+            # 将输出目录传给ConversionService
             markdown_content, images_info = conversion_service.convert_pdf_to_markdown(
                 db=db,
                 document_id=document_id,
-                pdf_local_path=str(pdf_local_path)
+                pdf_local_path=pdf_local_path,
+                output_dir=markdown_dir
             )
 
             logger.info(
@@ -215,38 +216,46 @@ class SyncWorker:
                 images_count=len(images_info)
             )
 
-            # Step 3: 生成图片描述
-            if images_info:
-                logger.info("generating_image_descriptions", document_id=document_id)
+            # Step 2.1: 立即保存原始markdown（Marker转换结果）
+            content_markdown_path = markdown_dir / "content.md"
+            with open(content_markdown_path, 'w', encoding='utf-8') as f:
+                f.write(markdown_content)
 
-                images_info = conversion_service.generate_image_descriptions(
-                    images_info=images_info,
-                    document_id=document_id
-                )
-
-                logger.info(
-                    "image_descriptions_generated",
-                    document_id=document_id,
-                    count=len(images_info)
-                )
-
-            # Step 4: 上传转换结果到S3
-            logger.info("uploading_conversion_results", document_id=document_id)
-
-            markdown_s3_key, image_s3_keys = conversion_service.upload_conversion_results(
-                db=db,
-                document_id=document_id,
-                markdown_content=markdown_content,
-                images_info=images_info
-            )
+            # 更新数据库记录（原始markdown已保存）
+            document.local_markdown_path = str(content_markdown_path)
+            db.commit()
 
             logger.info(
-                "conversion_results_uploaded",
+                "content_markdown_saved",
                 document_id=document_id,
-                markdown_s3_key=markdown_s3_key
+                path=str(content_markdown_path)
             )
 
-            # Step 5: 文本分块
+            # Step 3: 生成带上下文的图片描述并替换markdown中的图片引用
+            markdown_with_descriptions = conversion_service.generate_and_replace_images(
+                markdown_content=markdown_content,
+                doc_dir=str(markdown_dir),
+                document_id=document_id
+            )
+
+            # Step 3.1: 保存纯文本版markdown（用于向量化，图片已替换为描述）
+            text_markdown_path = Path(settings.text_markdown_dir) / f"{document_id}.md"
+            text_markdown_path.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(text_markdown_path, 'w', encoding='utf-8') as f:
+                f.write(markdown_with_descriptions)
+
+            # 更新数据库记录（text markdown已保存）
+            document.local_text_markdown_path = str(text_markdown_path)
+            db.commit()
+
+            logger.info(
+                "text_markdown_saved",
+                document_id=document_id,
+                path=str(text_markdown_path)
+            )
+
+            # Step 4: 文本分块
             logger.info("chunking_text", document_id=document_id)
 
             text_chunks, image_chunks = chunking_service.chunk_markdown(
@@ -279,15 +288,7 @@ class SyncWorker:
                 total_chunks=len(chunk_ids)
             )
 
-            # Step 7: 更新图片chunk的S3路径
-            if image_s3_keys:
-                embedding_service.update_chunk_s3_paths(
-                    db=db,
-                    document_id=document_id,
-                    image_s3_keys=image_s3_keys
-                )
-
-            # Step 8: 生成向量并索引
+            # Step 7: 生成向量并索引
             logger.info("generating_embeddings", document_id=document_id)
 
             indexed_count = embedding_service.generate_and_index_embeddings(
@@ -305,9 +306,10 @@ class SyncWorker:
             # Step 9: 清理临时文件
             conversion_service.cleanup_temp_files(document_id)
 
-            # 清理下载的PDF
-            if pdf_local_path.exists():
-                pdf_local_path.unlink()
+            # 清理下载的PDF（本地存储模式下不需要清理PDF）
+            # PDF是永久存储的，不是临时文件
+            # if Path(pdf_local_path).exists():
+            #     Path(pdf_local_path).unlink()
 
             logger.info(
                 "document_processing_completed",

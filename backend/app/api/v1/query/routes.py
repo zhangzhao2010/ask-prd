@@ -62,12 +62,27 @@ async def query_stream(
             )
 
             # 发送错误事件
-            error_event = {
-                "type": "error",
-                "message": f"查询失败: {str(e)}"
-            }
-            yield f"event: error\n"
-            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            try:
+                error_event = {
+                    "type": "error",
+                    "message": f"查询失败: {str(e)}"
+                }
+                yield f"event: error\n"
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            except Exception as inner_e:
+                logger.error("failed_to_send_error_event", error=str(inner_e))
+
+        finally:
+            # 确保流正确关闭
+            try:
+                # 发送一个完成事件
+                done_event = {
+                    "type": "done"
+                }
+                yield f"event: done\n"
+                yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
+            except Exception:
+                pass  # 忽略关闭时的错误
 
     return StreamingResponse(
         event_generator(),

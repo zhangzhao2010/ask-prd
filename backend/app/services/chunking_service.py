@@ -294,6 +294,10 @@ class ChunkingService:
         Returns:
             图片类型 (flowchart | prototype | mindmap | screenshot | diagram | other)
         """
+        # 处理None或空描述
+        if not description:
+            return "other"
+
         description_lower = description.lower()
 
         # 关键词映射

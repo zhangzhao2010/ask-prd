@@ -14,7 +14,6 @@ from app.core.errors import KnowledgeBaseNotFoundError
 from app.models.database import KnowledgeBase, Document, Chunk
 from app.utils.opensearch_client import opensearch_client
 from app.utils.bedrock_client import bedrock_client
-from app.utils.s3_client import s3_client
 from app.agents.sub_agent import create_sub_agent, invoke_sub_agent
 from app.agents.main_agent import create_main_agent, invoke_main_agent_stream
 
@@ -403,7 +402,7 @@ class QueryService:
     @staticmethod
     async def _get_document_content(doc: Document) -> str:
         """
-        获取文档的Markdown内容
+        获取文档的Markdown内容（从本地文件系统）
 
         Args:
             doc: 文档对象
@@ -411,27 +410,17 @@ class QueryService:
         Returns:
             Markdown内容
         """
-        # 优先使用本地缓存
         if doc.local_markdown_path:
             try:
                 with open(doc.local_markdown_path, 'r', encoding='utf-8') as f:
                     return f.read()
-            except:
-                pass
-
-        # 从S3下载
-        if doc.s3_key_markdown:
-            from pathlib import Path
-            import tempfile
-
-            temp_file = Path(tempfile.gettempdir()) / f"{doc.id}.md"
-            s3_client.download_file(doc.s3_key_markdown, str(temp_file))
-
-            with open(temp_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            temp_file.unlink()
-            return content
+            except Exception as e:
+                logger.error(
+                    "read_markdown_failed",
+                    document_id=doc.id,
+                    path=doc.local_markdown_path,
+                    error=str(e)
+                )
 
         return ""
 
@@ -543,7 +532,6 @@ class QueryService:
 
             executor = TwoStageExecutor(
                 db_session=db,
-                s3_client=s3_client,
                 bedrock_client=bedrock_client
             )
 

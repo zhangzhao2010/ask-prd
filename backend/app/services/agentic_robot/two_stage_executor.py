@@ -2,17 +2,14 @@
 TwoStageExecutor - Two-Stage查询执行器
 负责协调整个查询流程：Stage 1(文档级理解) + Stage 2(综合答案)
 """
-import json
 from typing import List, Dict, AsyncGenerator
 from sqlalchemy.orm import Session
-from dataclasses import asdict
 
 from app.core.logging import get_logger
 from app.models.database import Document
 from app.services.document_loader import DocumentLoader
 from app.services.document_processor import DocumentProcessor
 from app.services.reference_extractor import ReferenceExtractor, Stage1Result
-from app.utils.s3_client import S3Client
 from app.utils.bedrock_client import BedrockClient
 
 logger = get_logger(__name__)
@@ -47,6 +44,22 @@ STAGE2_PROMPT_TEMPLATE = """我已经让{doc_count}个助手分别阅读了相�
 
 现在请你综合这些回复，给出一个完整、准确、结构清晰的最终答案。
 
+**输出格式要求**：
+请使用Markdown格式输出，包含两个部分：
+
+## 综合回复
+[在这里给出完整答案，必须在相关内容后标注引用来源，例如：根据[DOC-xxx-PARA-5]的描述...]
+[如果引用图片，使用 [DOC-xxx-IMAGE-X] 标记]
+
+## 引用文档
+
+### 文档1：[文档名称]
+- [DOC-xxx-PARA-X] 段落内容...
+- [DOC-xxx-IMAGE-X] 图片：filename.png
+
+### 文档2：[文档名称]
+- ...
+
 **关键要求**：
 1. **必须保持引用标记**：每次提到文档中的信息时，必须在相关句子后添加引用标记，格式为 [DOC-xxx-PARA-X] 或 [DOC-xxx-IMAGE-X]
    - 例如："登录功能支持手机号和邮箱[DOC-abc12345-PARA-3]"
@@ -54,29 +67,8 @@ STAGE2_PROMPT_TEMPLATE = """我已经让{doc_count}个助手分别阅读了相�
 2. 如果多个文档的回复有冲突，请指出差异并说明可能的原因
 3. 如果多个文档的回复互补，请整合成完整答案
 4. 答案要自然流畅，不要简单罗列
-5. 使用JSON组织答案，JSON结构如下（注意最后一个元素后面不要有逗号）：
-
-{{
-    "answer": "xxxxxx",
-    "references": [
-        {{
-            "chunk_id": "[DOC-doc-3931-PARA-25]",
-            "chunk_type": "text/image",
-            "chunk_content": "xxxxx/image_url"
-        }},
-        {{
-            "chunk_id": "[DOC-doc-3931-PARA-24]",
-            "chunk_type": "text/image",
-            "chunk_content": "xxxxx/image_url"
-        }}
-    ]
-}}
-
-
-**引用标记示例**：
-- 文本段落引用：根据产品需求文档[DOC-abc12345-PARA-5]，用户可以通过...
-- 图片引用：如架构图[DOC-def67890-IMAGE-2]所示，系统分为三层...
-- 多个引用：登录模块[DOC-abc12345-PARA-3]支持多种方式，包括微信登录[DOC-abc12345-IMAGE-1]和手机号登录[DOC-abc12345-PARA-4]
+5. 在"引用文档"部分，列出所有在"综合回复"中引用的段落和图片
+6. 图片引用格式：- [DOC-xxx-IMAGE-X] 图片：filename.png
 
 用户问题：{query}
 """
@@ -88,7 +80,6 @@ class TwoStageExecutor:
     def __init__(
         self,
         db_session: Session,
-        s3_client: S3Client,
         bedrock_client: BedrockClient
     ):
         """
@@ -96,15 +87,13 @@ class TwoStageExecutor:
 
         Args:
             db_session: 数据库会话
-            s3_client: S3客户端
             bedrock_client: Bedrock客户端
         """
         self.db = db_session
-        self.s3_client = s3_client
         self.bedrock_client = bedrock_client
 
         # 初始化子模块
-        self.doc_loader = DocumentLoader(db_session, s3_client)
+        self.doc_loader = DocumentLoader(db_session)
         self.doc_processor = DocumentProcessor()
         self.ref_extractor = ReferenceExtractor()
 
@@ -141,9 +130,18 @@ class TwoStageExecutor:
             stage1_results = []
 
             for idx, doc_id in enumerate(document_ids, 1):
-                # 推送进度
+                # 检查文档是否存在且未删除
                 doc = self.db.query(Document).filter(Document.id == doc_id).first()
-                doc_name = doc.filename if doc else "Unknown"
+
+                if not doc:
+                    logger.warning("document_not_found", doc_id=doc_id)
+                    continue
+
+                if doc.status == "deleted":
+                    logger.warning("document_deleted_skipping", doc_id=doc_id, filename=doc.filename)
+                    continue
+
+                doc_name = doc.filename
 
                 yield {
                     "type": "progress",
@@ -210,7 +208,7 @@ class TwoStageExecutor:
                 successful_documents=len(stage1_results)
             )
 
-            # Stage 2: 综合答案（收集完整JSON响应）
+            # Stage 2: 综合答案（Markdown格式）
             logger.info(
                 "starting_stage2",
                 query=query[:100],
@@ -224,61 +222,19 @@ class TwoStageExecutor:
                 "message": "正在生成综合答案..."
             }
 
-            # 调用Bedrock获取完整JSON响应（非流式）
-            json_response = await self._stage2_synthesize_sync(query, stage1_results)
+            # 调用Bedrock获取完整Markdown响应（非流式）
+            markdown_response = await self._stage2_synthesize_sync(query, stage1_results)
 
             logger.info(
-                "stage2_json_received",
-                response_length=len(json_response),
-                response_preview=json_response[:500]
+                "stage2_markdown_received",
+                response_length=len(markdown_response),
+                response_preview=markdown_response[:500]
             )
 
-            # 解析JSON
-            try:
-                import json
-                import re
-                # 移除可能的markdown代码块标记
-                json_str = json_response.strip()
-                
-                print(json_str)
-                
-                if json_str.startswith("```json"):
-                    json_str = json_str[7:]
-                if json_str.startswith("```"):
-                    json_str = json_str[3:]
-                if json_str.endswith("```"):
-                    json_str = json_str[:-3]
-                json_str = json_str.strip()
-
-                # 尝试清理尾部逗号（虽然prompt已要求不要加，但以防万一）
-                # 替换 },] 为 }] 和 ",} 为 "}
-                json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-
-                response_data = json.loads(json_str)
-                full_answer = response_data.get("answer", "")
-                llm_references = response_data.get("references", [])
-
-                logger.info(
-                    "stage2_json_parsed",
-                    answer_length=len(full_answer),
-                    references_count=len(llm_references)
-                )
-
-            except Exception as e:
-                logger.error(
-                    "stage2_json_parse_failed",
-                    error=str(e),
-                    json_preview=json_response[:1000],
-                    exc_info=True
-                )
-                # 降级：使用原始响应作为答案
-                full_answer = json_response
-                llm_references = []
-
-            # 流式输出答案（逐字发送，模拟流式效果）
+            # 流式输出Markdown（逐字发送，模拟流式效果）
             import asyncio
-            for i in range(0, len(full_answer), 10):  # 每次发送10个字符
-                chunk = full_answer[i:i+10]
+            for i in range(0, len(markdown_response), 10):  # 每次发送10个字符
+                chunk = markdown_response[i:i+10]
                 yield {
                     "type": "answer_delta",
                     "data": {"text": chunk}
@@ -287,27 +243,21 @@ class TwoStageExecutor:
 
             logger.info(
                 "stage2_completed",
-                answer_length=len(full_answer)
+                answer_length=len(markdown_response)
             )
 
-            # 处理LLM返回的references
-            references = self._parse_llm_references(llm_references, stage1_results)
+            # 提取答案中的引用并发送references事件
+            references = self._extract_references_from_markdown(markdown_response, stage1_results)
 
-            # 降级方案：如果没有引用，从stage1结果中构建基础引用
-            if not references:
-                logger.warning("no_references_in_llm_response_using_fallback")
-                references = self._build_fallback_references(stage1_results)
-
-            logger.info(
-                "references_processed",
-                count=len(references),
-                ref_ids=[ref.ref_id for ref in references]
-            )
-
-            yield {
-                "type": "references",
-                "data": [asdict(ref) for ref in references]
-            }
+            if references:
+                logger.info(
+                    "sending_references",
+                    references_count=len(references)
+                )
+                yield {
+                    "type": "references",
+                    "data": references
+                }
 
             # 完成
             yield {
@@ -318,8 +268,7 @@ class TwoStageExecutor:
             logger.info(
                 "two_stage_execution_completed",
                 query=query[:100],
-                documents_processed=len(stage1_results),
-                references_count=len(references)
+                documents_processed=len(stage1_results)
             )
 
         except Exception as e:
@@ -363,6 +312,24 @@ class TwoStageExecutor:
             "calling_bedrock_stage1",
             document_id=document_id,
             content_blocks=len(processed_doc.content)
+        )
+
+        # Debug: 记录content详细信息
+        content_info = []
+        for block in processed_doc.content:
+            if isinstance(block, dict):
+                if 'text' in block:
+                    content_info.append(f"text({len(block['text'])}chars)")
+                elif 'image' in block:
+                    content_info.append("image")
+            else:
+                content_info.append(f"unknown({type(block).__name__})")
+
+        logger.info(
+            'processed_doc_content_info',
+            doc_short_id=processed_doc.doc_short_id,
+            content_blocks=len(processed_doc.content),
+            content_info=content_info[:10]  # 只显示前10个
         )
 
         # 3. 构建Stage 1 Prompt并调用Bedrock
@@ -411,23 +378,42 @@ class TwoStageExecutor:
             }
         ]
 
+        logger.info(
+            "bedrock_stage1_request_prepared",
+            doc_short_id=processed_doc.doc_short_id,
+            prompt_length=len(prompt_text),
+            total_content_blocks=len([{"text": prompt_text}] + processed_doc.content)
+        )
+
         try:
-            # 调用Bedrock converse API
+            # 调用Bedrock converse API（设置300秒超时）
             import asyncio
-            response = await asyncio.to_thread(
-                self._invoke_bedrock_sync,
-                messages,
-                temperature=0.3,
-                max_tokens=4096
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._invoke_bedrock_sync,
+                    messages,
+                    temperature=0.3,
+                    max_tokens=8000
+                ),
+                timeout=300.0  # 300秒超时
             )
 
             logger.info(
                 "bedrock_stage1_response_received",
                 doc_short_id=processed_doc.doc_short_id,
-                response_length=len(response)
+                response_length=len(response),
+                response_preview=response[:500] if response else ""
             )
 
             return response
+
+        except asyncio.TimeoutError:
+            logger.error(
+                "bedrock_stage1_timeout",
+                doc_short_id=processed_doc.doc_short_id,
+                timeout=300
+            )
+            raise Exception("Bedrock API调用超时（300秒）")
 
         except Exception as e:
             logger.error(
@@ -442,7 +428,7 @@ class TwoStageExecutor:
         self,
         messages,
         temperature: float = 0.7,
-        max_tokens: int = 4096
+        max_tokens: int = 8000
     ) -> str:
         """
         同步调用Bedrock（辅助方法）
@@ -460,20 +446,44 @@ class TwoStageExecutor:
         # 直接使用BedrockClient的boto_session创建runtime client
         bedrock_runtime = self.bedrock_client.boto_session.client('bedrock-runtime')
 
-        response = bedrock_runtime.converse(
-            modelId=settings.generation_model_id,
-            messages=messages,
-            inferenceConfig={
-                "maxTokens": max_tokens,
-                "temperature": temperature
-            }
+        logger.info(
+            "calling_bedrock_converse_api",
+            model_id=settings.generation_model_id,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages_count=len(messages)
         )
 
-        # 提取回复文本
-        output_message = response['output']['message']
-        text = output_message['content'][0]['text']
+        try:
+            response = bedrock_runtime.converse(
+                modelId=settings.generation_model_id,
+                messages=messages,
+                inferenceConfig={
+                    "maxTokens": max_tokens,
+                    "temperature": temperature
+                }
+            )
 
-        return text
+            logger.info(
+                "bedrock_converse_api_success",
+                input_tokens=response.get('usage', {}).get('inputTokens', 0),
+                output_tokens=response.get('usage', {}).get('outputTokens', 0)
+            )
+
+            # 提取回复文本
+            output_message = response['output']['message']
+            text = output_message['content'][0]['text']
+
+            return text
+
+        except Exception as e:
+            logger.error(
+                "bedrock_converse_api_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
+            raise
 
     async def _stage2_synthesize_sync(
         self,
@@ -481,14 +491,14 @@ class TwoStageExecutor:
         stage1_results: List[Stage1Result]
     ) -> str:
         """
-        Stage 2: 综合所有文档的理解结果，生成JSON格式答案（非流式）
+        Stage 2: 综合所有文档的理解结果，生成Markdown格式答案（非流式）
 
         Args:
             query: 用户问题
             stage1_results: 所有Stage 1的结果
 
         Returns:
-            完整的JSON响应文本
+            完整的Markdown响应文本
         """
         # 1. 构建Stage 2 Prompt
         prompt = self._build_stage2_prompt(query, stage1_results)
@@ -502,21 +512,32 @@ class TwoStageExecutor:
         ]
 
         try:
-            # 使用同步API获取完整响应
+            # 使用同步API获取完整响应（设置300秒超时，Stage 2可能需要更长时间）
             import asyncio
-            response = await asyncio.to_thread(
-                self._invoke_bedrock_sync,
-                messages,
-                temperature=0.7,
-                max_tokens=4096
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._invoke_bedrock_sync,
+                    messages,
+                    temperature=0.7,
+                    max_tokens=8000
+                ),
+                timeout=300.0  # 300秒超时
             )
 
             logger.info(
                 "bedrock_stage2_sync_completed",
-                response_length=len(response)
+                response_length=len(response),
+                response_preview=response[:500] if response else ""
             )
 
             return response
+
+        except asyncio.TimeoutError:
+            logger.error(
+                "bedrock_stage2_timeout",
+                timeout=300
+            )
+            raise Exception("Bedrock Stage 2调用超时（300秒）")
 
         except Exception as e:
             logger.error(
@@ -735,6 +756,93 @@ class TwoStageExecutor:
         logger.info(
             "fallback_references_built",
             count=len(references)
+        )
+
+        return references
+
+    def _extract_references_from_markdown(
+        self,
+        markdown_text: str,
+        stage1_results: List[Stage1Result]
+    ) -> List[Dict]:
+        """
+        从Markdown答案中提取引用标记，并构建完整的引用列表
+
+        Args:
+            markdown_text: Stage 2生成的Markdown答案
+            stage1_results: Stage 1结果列表
+
+        Returns:
+            引用对象列表，格式符合前端CitationItem的要求
+        """
+        import re
+
+        # 使用正则表达式提取所有的 [DOC-xxx-PARA-X] 和 [DOC-xxx-IMAGE-X] 标记
+        pattern = r'\[DOC-[^\]]+\]'
+        matches = re.findall(pattern, markdown_text)
+
+        # 去重
+        unique_refs = list(set(matches))
+
+        logger.info(
+            "extracted_references_from_markdown",
+            total_matches=len(matches),
+            unique_refs=len(unique_refs),
+            refs_preview=unique_refs[:10]
+        )
+
+        references = []
+
+        for ref_text in unique_refs:
+            # 去掉方括号
+            ref_id = ref_text.strip('[]')
+
+            # 查找对应的stage1_result和引用内容
+            found = False
+            for result in stage1_results:
+                if ref_id in result.references_map:
+                    content = result.references_map[ref_id]
+
+                    # 判断类型（PARA或IMAGE）
+                    chunk_type = "text" if "-PARA-" in ref_id else "image"
+
+                    # 构建引用对象
+                    ref_obj = {
+                        "ref_id": ref_id,
+                        "doc_id": result.doc_id,
+                        "doc_name": result.doc_name,
+                        "chunk_type": chunk_type,
+                        "content": content if chunk_type == "text" else None,
+                        "image_url": None
+                    }
+
+                    # 如果是图片，构建image_url
+                    if chunk_type == "image":
+                        # content是图片文件名
+                        ref_obj["image_url"] = f"/api/v1/documents/{result.doc_id}/images/{content}"
+                        ref_obj["content"] = content  # 保留文件名作为content
+
+                    references.append(ref_obj)
+                    found = True
+
+                    logger.debug(
+                        "reference_matched",
+                        ref_id=ref_id,
+                        doc_id=result.doc_id,
+                        chunk_type=chunk_type
+                    )
+                    break
+
+            if not found:
+                logger.warning(
+                    "reference_not_found_in_stage1_results",
+                    ref_id=ref_id,
+                    available_docs=[r.doc_short_id for r in stage1_results]
+                )
+
+        logger.info(
+            "references_extraction_completed",
+            total_extracted=len(references)
         )
 
         return references

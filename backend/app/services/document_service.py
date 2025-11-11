@@ -12,10 +12,8 @@ from app.models.schemas import DocumentCreate, DocumentUpdate
 from app.core.logging import get_logger
 from app.core.errors import (
     DocumentNotFoundError,
-    KnowledgeBaseNotFoundError,
-    S3UploadError
+    KnowledgeBaseNotFoundError
 )
-from app.utils.s3_client import s3_client
 
 logger = get_logger(__name__)
 
@@ -33,7 +31,7 @@ class DocumentService:
         content_type: str = "application/pdf"
     ) -> Document:
         """
-        上传文档到S3并创建记录
+        上传文档到本地文件系统并创建记录
 
         Args:
             db: 数据库会话
@@ -48,8 +46,10 @@ class DocumentService:
 
         Raises:
             KnowledgeBaseNotFoundError: 知识库不存在
-            S3UploadError: S3上传失败
         """
+        import os
+        from app.core.config import settings
+
         # 1. 检查知识库是否存在
         kb = db.query(KnowledgeBase).filter(
             KnowledgeBase.id == kb_id,
@@ -59,25 +59,25 @@ class DocumentService:
         if not kb:
             raise KnowledgeBaseNotFoundError(kb_id)
 
-        # 2. 生成文档ID和S3路径
+        # 2. 生成文档ID和本地路径
         doc_id = f"doc-{uuid.uuid4()}"
-        s3_key = f"{kb.s3_prefix}documents/{doc_id}/original/{filename}"
+        local_pdf_path = os.path.join(settings.pdf_dir, f"{doc_id}.pdf")
 
         logger.info(
             "uploading_document",
             doc_id=doc_id,
             kb_id=kb_id,
             filename=filename,
-            file_size=file_size
+            file_size=file_size,
+            local_pdf_path=local_pdf_path
         )
 
         try:
-            # 3. 上传原始文件到S3
-            s3_uri = s3_client.upload_file(
-                file_obj=file,
-                s3_key=s3_key,
-                content_type=content_type
-            )
+            # 3. 保存文件到本地
+            os.makedirs(os.path.dirname(local_pdf_path), exist_ok=True)
+
+            with open(local_pdf_path, 'wb') as f:
+                f.write(file.read())
 
             # 4. 创建数据库记录
             doc = Document(
@@ -85,7 +85,7 @@ class DocumentService:
                 kb_id=kb_id,
                 filename=filename,
                 file_size=file_size,
-                s3_key=s3_key,
+                local_pdf_path=local_pdf_path,
                 status="uploaded"  # 初始状态：已上传
             )
 
@@ -97,7 +97,7 @@ class DocumentService:
                 "document_uploaded",
                 doc_id=doc_id,
                 kb_id=kb_id,
-                s3_uri=s3_uri
+                local_pdf_path=local_pdf_path
             )
 
             return doc
@@ -105,12 +105,13 @@ class DocumentService:
         except Exception as e:
             db.rollback()
             logger.error("document_upload_failed", doc_id=doc_id, error=str(e))
-            # 尝试清理S3文件
+            # 尝试清理本地文件
             try:
-                s3_client.delete_file(s3_key)
+                if os.path.exists(local_pdf_path):
+                    os.remove(local_pdf_path)
             except:
                 pass
-            raise S3UploadError({"error": str(e), "doc_id": doc_id, "filename": filename})
+            raise Exception(f"Document upload failed: {str(e)}")
 
     @staticmethod
     def get_document(db: Session, doc_id: str) -> Document:
@@ -217,9 +218,6 @@ class DocumentService:
             doc.status = doc_data.status
 
         # 更新Markdown路径
-        if doc_data.s3_key_markdown:
-            doc.s3_key_markdown = doc_data.s3_key_markdown
-
         if doc_data.local_markdown_path:
             doc.local_markdown_path = doc_data.local_markdown_path
 
@@ -238,7 +236,7 @@ class DocumentService:
     @staticmethod
     def delete_document(db: Session, doc_id: str) -> bool:
         """
-        删除文档（软删除数据库，真删除S3）
+        删除文档（软删除数据库，真删除本地文件和向量）
 
         Args:
             db: 数据库会话
@@ -250,32 +248,90 @@ class DocumentService:
         Raises:
             DocumentNotFoundError: 文档不存在
         """
+        from pathlib import Path
+        import shutil
+
         doc = DocumentService.get_document(db, doc_id)
 
         try:
-            # 1. 软删除数据库记录
-            doc.status = "deleted"
-            doc.updated_at = datetime.utcnow()
+            # 1. 删除OpenSearch中的向量数据
+            from app.models.database import Chunk
+            from app.utils.opensearch_client import opensearch_client
 
-            # 2. 删除S3上的所有相关文件
-            # 删除整个文档目录：documents/{doc_id}/
             kb = db.query(KnowledgeBase).filter(
                 KnowledgeBase.id == doc.kb_id
             ).first()
 
-            if kb:
-                s3_prefix = f"{kb.s3_prefix}documents/{doc_id}/"
-                deleted_count = s3_client.delete_prefix(s3_prefix)
-                logger.info(
-                    "s3_files_deleted",
-                    doc_id=doc_id,
-                    prefix=s3_prefix,
-                    count=deleted_count
-                )
+            if kb and kb.opensearch_index_name:
+                # 获取所有chunk IDs
+                chunks = db.query(Chunk).filter(
+                    Chunk.document_id == doc_id
+                ).all()
+
+                chunk_ids = [chunk.id for chunk in chunks]
+                if chunk_ids:
+                    # 批量删除向量
+                    deleted_count = 0
+                    for chunk_id in chunk_ids:
+                        try:
+                            opensearch_client.delete_document(
+                                index_name=kb.opensearch_index_name,
+                                doc_id=chunk_id
+                            )
+                            deleted_count += 1
+                        except Exception as e:
+                            logger.warning(
+                                "opensearch_vector_deletion_failed",
+                                chunk_id=chunk_id,
+                                error=str(e)
+                            )
+
+                    logger.info(
+                        "opensearch_vectors_deleted",
+                        doc_id=doc_id,
+                        count=deleted_count,
+                        total=len(chunk_ids)
+                    )
+
+            # 2. 软删除数据库记录（级联删除chunks）
+            doc.status = "deleted"
+            doc.updated_at = datetime.utcnow()
+
+            # 3. 删除本地文件
+            files_deleted = 0
+
+            # 删除PDF文件
+            if doc.local_pdf_path:
+                pdf_path = Path(doc.local_pdf_path)
+                if pdf_path.exists():
+                    pdf_path.unlink()
+                    files_deleted += 1
+                    logger.debug("pdf_deleted", path=str(pdf_path))
+
+            # 删除Markdown目录（包含content.md和所有图片）
+            if doc.local_markdown_path:
+                markdown_dir = Path(doc.local_markdown_path).parent
+                if markdown_dir.exists():
+                    file_count = len(list(markdown_dir.glob("*")))
+                    shutil.rmtree(markdown_dir)
+                    files_deleted += file_count
+                    logger.debug("markdown_dir_deleted", path=str(markdown_dir), file_count=file_count)
+
+            # 删除Text Markdown文件
+            if doc.local_text_markdown_path:
+                text_md_path = Path(doc.local_text_markdown_path)
+                if text_md_path.exists():
+                    text_md_path.unlink()
+                    files_deleted += 1
+                    logger.debug("text_markdown_deleted", path=str(text_md_path))
 
             db.commit()
 
-            logger.info("document_deleted", doc_id=doc_id)
+            logger.info(
+                "document_deleted",
+                doc_id=doc_id,
+                local_files_deleted=files_deleted
+            )
             return True
 
         except Exception as e:

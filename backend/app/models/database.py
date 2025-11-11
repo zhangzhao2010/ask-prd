@@ -21,8 +21,7 @@ class KnowledgeBase(Base):
     id = Column(String, primary_key=True)  # UUID格式
     name = Column(String, nullable=False, unique=True)
     description = Column(Text)
-    s3_bucket = Column(String, nullable=False)
-    s3_prefix = Column(String, nullable=False)  # 必须以 / 结尾
+    local_storage_path = Column(String)  # 本地存储路径，例如: data/knowledge_bases/{kb_id}/
     opensearch_collection_id = Column(String)
     opensearch_index_name = Column(String)
     status = Column(String, nullable=False, default="active")  # active | deleted
@@ -49,9 +48,9 @@ class Document(Base):
     id = Column(String, primary_key=True)  # UUID格式
     kb_id = Column(String, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
     filename = Column(String, nullable=False)
-    s3_key = Column(String, nullable=False)  # 原始PDF的S3路径
-    s3_key_markdown = Column(String)  # Markdown文件的S3路径
-    local_markdown_path = Column(String)  # 本地Markdown缓存路径（可选）
+    local_pdf_path = Column(String)  # 本地PDF路径: data/documents/pdfs/{document_id}.pdf
+    local_markdown_path = Column(String)  # 本地原始Markdown路径: data/documents/markdowns/{document_id}/content.md
+    local_text_markdown_path = Column(String)  # 本地纯文本Markdown路径: data/documents/text_markdowns/{document_id}.md
     file_size = Column(Integer)  # 文件大小（字节）
     page_count = Column(Integer)  # PDF页数
     status = Column(String, nullable=False, default="uploaded")  # uploaded | processing | completed | failed
