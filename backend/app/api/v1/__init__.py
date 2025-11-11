@@ -2,6 +2,8 @@
 API v1路由聚合
 """
 from fastapi import APIRouter, Request
+from app.api.v1.auth.routes import router as auth_router
+from app.api.v1.users.routes import router as users_router
 from app.api.v1.knowledge_bases.routes import router as kb_router
 from app.api.v1.documents.routes import router as doc_router
 from app.api.v1.sync_tasks.routes import router as sync_router
@@ -9,6 +11,20 @@ from app.api.v1.query.routes import router as query_router
 from app.api.v1.chunks.routes import router as chunks_router
 
 api_router = APIRouter()
+
+# 挂载认证路由（无需认证）
+api_router.include_router(
+    auth_router,
+    prefix="/auth",
+    tags=["认证"]
+)
+
+# 挂载用户管理路由（仅管理员）
+api_router.include_router(
+    users_router,
+    prefix="/users",
+    tags=["用户管理"]
+)
 
 # 挂载知识库路由
 api_router.include_router(

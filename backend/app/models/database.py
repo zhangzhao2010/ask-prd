@@ -5,13 +5,39 @@ SQLAlchemy数据库模型
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import (
-    Column, String, Integer, Text, DateTime, ForeignKey, Index
+    Column, String, Integer, Text, DateTime, ForeignKey, Index, Boolean
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 Base = declarative_base()
+
+
+class User(Base):
+    """用户表"""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(50), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(20), nullable=False, default="user")  # admin | user
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    # 关系（kb_permissions需要指定foreign_keys避免歧义）
+    owned_kbs = relationship("KnowledgeBase", back_populates="owner", cascade="all, delete-orphan")
+    kb_permissions = relationship("KBPermission", back_populates="user", foreign_keys="KBPermission.user_id", cascade="all, delete-orphan")
+    query_history = relationship("QueryHistory", back_populates="user", cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<User(id={self.id}, username={self.username}, role={self.role})>"
+
+
+# 索引
+Index("idx_users_username", User.username)
+Index("idx_users_role", User.role)
 
 
 class KnowledgeBase(Base):
@@ -25,20 +51,26 @@ class KnowledgeBase(Base):
     opensearch_collection_id = Column(String)
     opensearch_index_name = Column(String)
     status = Column(String, nullable=False, default="active")  # active | deleted
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)  # 所有者
+    visibility = Column(String(20), nullable=False, default="private")  # private | public | shared
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
     # 关系
+    owner = relationship("User", back_populates="owned_kbs")
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
     chunks = relationship("Chunk", back_populates="knowledge_base", cascade="all, delete-orphan")
     sync_tasks = relationship("SyncTask", back_populates="knowledge_base", cascade="all, delete-orphan")
+    permissions = relationship("KBPermission", back_populates="knowledge_base", cascade="all, delete-orphan")
 
     def __repr__(self):
-        return f"<KnowledgeBase(id={self.id}, name={self.name})>"
+        return f"<KnowledgeBase(id={self.id}, name={self.name}, visibility={self.visibility})>"
 
 
 # 索引
 Index("idx_kb_status", KnowledgeBase.status)
+Index("idx_kb_owner_id", KnowledgeBase.owner_id)
+Index("idx_kb_visibility", KnowledgeBase.visibility)
 
 
 class Document(Base):
@@ -145,3 +177,57 @@ class SyncTask(Base):
 Index("idx_sync_tasks_kb_id", SyncTask.kb_id)
 Index("idx_sync_tasks_status", SyncTask.status)
 Index("idx_sync_tasks_created", SyncTask.created_at.desc())
+
+
+class KBPermission(Base):
+    """知识库权限表"""
+    __tablename__ = "knowledge_base_permissions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    kb_id = Column(String, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    permission_type = Column(String(20), nullable=False)  # read | write
+    granted_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # 授予权限的用户（所有者）
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    # 关系（必须指定foreign_keys避免歧义）
+    knowledge_base = relationship("KnowledgeBase", back_populates="permissions")
+    user = relationship("User", back_populates="kb_permissions", foreign_keys="KBPermission.user_id")
+
+    def __repr__(self):
+        return f"<KBPermission(kb_id={self.kb_id}, user_id={self.user_id}, permission={self.permission_type})>"
+
+
+# 索引和约束
+Index("idx_kb_permissions_kb_id", KBPermission.kb_id)
+Index("idx_kb_permissions_user_id", KBPermission.user_id)
+Index("idx_kb_permissions_unique", KBPermission.kb_id, KBPermission.user_id, unique=True)
+
+
+class QueryHistory(Base):
+    """查询历史表"""
+    __tablename__ = "query_history"
+
+    id = Column(String, primary_key=True)  # UUID格式
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    kb_id = Column(String, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    query_text = Column(Text, nullable=False)
+    answer_text = Column(Text)
+    citations_count = Column(Integer, default=0)
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    total_tokens = Column(Integer, default=0)
+    response_time_ms = Column(Integer, default=0)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    # 关系
+    user = relationship("User", back_populates="query_history")
+
+    def __repr__(self):
+        return f"<QueryHistory(id={self.id}, user_id={self.user_id}, kb_id={self.kb_id})>"
+
+
+# 索引
+Index("idx_query_history_user_id", QueryHistory.user_id)
+Index("idx_query_history_kb_id", QueryHistory.kb_id)
+Index("idx_query_history_created", QueryHistory.created_at.desc())

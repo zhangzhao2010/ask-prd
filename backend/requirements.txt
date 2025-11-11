@@ -27,6 +27,11 @@ tiktoken>=0.7.0
 pydantic>=2.9.0
 pydantic-settings>=2.5.0
 
+# 认证和安全
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt==4.1.2  # 锁定4.1.2版本，避免与passlib不兼容
+
 # 日志
 structlog>=24.4.0
 

@@ -1,257 +1,284 @@
 /**
- * API服务封装
- * 统一管理所有后端API调用
+ * API客户端
+ * 统一的API调用封装，自动处理认证、错误等
  */
 
-import axios, { AxiosInstance, AxiosError } from 'axios';
-import type {
-  KnowledgeBase,
-  KnowledgeBaseCreate,
-  KnowledgeBaseUpdate,
-  KnowledgeBaseListResponse,
-  KnowledgeBaseDetail,
-  Document,
-  DocumentListResponse,
-  DocumentUploadResponse,
-  SyncTask,
-  SyncTaskCreate,
-  SyncTaskListResponse,
-  QueryHistory,
-  QueryHistoryListResponse,
-  ErrorResponse,
-} from '@/types';
+import { authService, User } from './auth';
 
-// API基础URL
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+interface RequestOptions extends RequestInit {
+  requireAuth?: boolean; // 是否需要认证，默认true
+}
 
-// 创建axios实例
-const apiClient: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  timeout: 30000, // 30秒超时
-});
+class ApiClient {
+  private readonly baseURL = '/api/v1';
 
-// 响应拦截器：统一错误处理
-apiClient.interceptors.response.use(
-  (response) => response,
-  (error: AxiosError<ErrorResponse>) => {
-    // 统一错误处理
-    if (error.response) {
-      // 服务器返回错误
-      const errorData = error.response.data;
-      console.error('API Error:', errorData);
-      return Promise.reject(errorData);
-    } else if (error.request) {
-      // 请求发送但没有响应
-      console.error('Network Error:', error.message);
-      return Promise.reject({
-        error_code: 'NETWORK_ERROR',
-        message: '网络连接失败，请检查后端服务是否启动',
-        details: { originalError: error.message },
-      });
-    } else {
-      // 其他错误
-      console.error('Request Error:', error.message);
-      return Promise.reject({
-        error_code: 'REQUEST_ERROR',
-        message: error.message,
-        details: {},
-      });
+  /**
+   * 通用请求方法
+   */
+  private async request<T>(
+    url: string,
+    options: RequestOptions = {}
+  ): Promise<T> {
+    const { requireAuth = true, ...fetchOptions } = options;
+
+    // 构建请求头
+    const headers: HeadersInit = {
+      ...fetchOptions.headers,
+    };
+
+    // 添加认证Token
+    if (requireAuth) {
+      const token = authService.getToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
     }
-  }
-);
 
-// ============ 知识库API ============
+    // 发送请求
+    const response = await fetch(`${this.baseURL}${url}`, {
+      ...fetchOptions,
+      headers,
+    });
+
+    // 处理401 - Token过期或无效
+    if (response.status === 401) {
+      authService.logout();
+      window.location.href = '/login';
+      throw new Error('认证失败，请重新登录');
+    }
+
+    // 处理204 - No Content
+    if (response.status === 204) {
+      return null as T;
+    }
+
+    // 处理错误响应
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || `请求失败: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  /**
+   * GET请求
+   */
+  async get<T>(url: string, options?: RequestOptions): Promise<T> {
+    return this.request<T>(url, { ...options, method: 'GET' });
+  }
+
+  /**
+   * POST请求
+   */
+  async post<T>(
+    url: string,
+    data?: unknown,
+    options?: RequestOptions
+  ): Promise<T> {
+    return this.request<T>(url, {
+      ...options,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+      body: data ? JSON.stringify(data) : undefined,
+    });
+  }
+
+  /**
+   * PUT请求
+   */
+  async put<T>(
+    url: string,
+    data?: unknown,
+    options?: RequestOptions
+  ): Promise<T> {
+    return this.request<T>(url, {
+      ...options,
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+      body: data ? JSON.stringify(data) : undefined,
+    });
+  }
+
+  /**
+   * PATCH请求
+   */
+  async patch<T>(
+    url: string,
+    data?: unknown,
+    options?: RequestOptions
+  ): Promise<T> {
+    return this.request<T>(url, {
+      ...options,
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+      body: data ? JSON.stringify(data) : undefined,
+    });
+  }
+
+  /**
+   * DELETE请求
+   */
+  async delete<T>(url: string, options?: RequestOptions): Promise<T> {
+    return this.request<T>(url, { ...options, method: 'DELETE' });
+  }
+
+  // ==================== 用户管理API ====================
+
+  /**
+   * 获取所有用户（仅管理员）
+   */
+  async listUsers(): Promise<{ items: User[]; total: number }> {
+    return this.get('/users');
+  }
+
+  /**
+   * 创建用户（仅管理员）
+   */
+  async createUser(username: string, password: string): Promise<User> {
+    return this.post('/users', { username, password });
+  }
+
+  /**
+   * 删除用户（仅管理员）
+   */
+  async deleteUser(userId: number): Promise<void> {
+    return this.delete(`/users/${userId}`);
+  }
+
+  /**
+   * 修改密码
+   */
+  async changePassword(
+    oldPassword: string,
+    newPassword: string
+  ): Promise<{ message: string }> {
+    return this.put('/auth/change-password', {
+      old_password: oldPassword,
+      new_password: newPassword,
+    });
+  }
+
+  // ==================== 知识库权限API ====================
+
+  /**
+   * 修改知识库可见性
+   */
+  async updateKBVisibility(
+    kbId: string,
+    visibility: 'private' | 'public' | 'shared'
+  ): Promise<any> {
+    return this.put(`/knowledge-bases/${kbId}/visibility`, { visibility });
+  }
+
+  /**
+   * 查看知识库权限列表
+   */
+  async listKBPermissions(kbId: string): Promise<{
+    permissions: Array<{
+      id: number;
+      kb_id: string;
+      user_id: number;
+      username: string;
+      permission_type: 'read' | 'write';
+      granted_by: number;
+      created_at: string;
+    }>;
+  }> {
+    return this.get(`/knowledge-bases/${kbId}/permissions`);
+  }
+
+  /**
+   * 授予或更新知识库权限
+   */
+  async grantKBPermission(
+    kbId: string,
+    username: string,
+    permissionType: 'read' | 'write'
+  ): Promise<any> {
+    return this.post(`/knowledge-bases/${kbId}/permissions`, {
+      username,
+      permission_type: permissionType,
+    });
+  }
+
+  /**
+   * 撤销知识库权限
+   */
+  async revokeKBPermission(kbId: string, userId: number): Promise<void> {
+    return this.delete(`/knowledge-bases/${kbId}/permissions/${userId}`);
+  }
+}
+
+export const apiClient = new ApiClient();
+
+// ==================== 兼容性导出（为旧代码提供支持） ====================
 
 export const knowledgeBaseAPI = {
-  /**
-   * 获取知识库列表
-   */
-  async list(params?: { page?: number; page_size?: number }): Promise<KnowledgeBaseListResponse> {
-    const response = await apiClient.get<KnowledgeBaseListResponse>('/knowledge-bases', { params });
-    return response.data;
+  async list(params?: { page?: number; page_size?: number }) {
+    const query = new URLSearchParams();
+    if (params?.page) query.append('page', params.page.toString());
+    if (params?.page_size) query.append('page_size', params.page_size.toString());
+    return apiClient.get<{ items: any[]; meta: any }>(`/knowledge-bases?${query}`);
   },
-
-  /**
-   * 创建知识库
-   */
-  async create(data: KnowledgeBaseCreate): Promise<KnowledgeBase> {
-    const response = await apiClient.post<KnowledgeBase>('/knowledge-bases', data);
-    return response.data;
+  async get(id: string) {
+    return apiClient.get(`/knowledge-bases/${id}`);
   },
-
-  /**
-   * 获取知识库详情
-   */
-  async get(kbId: string): Promise<KnowledgeBaseDetail> {
-    const response = await apiClient.get<KnowledgeBaseDetail>(`/knowledge-bases/${kbId}`);
-    return response.data;
+  async create(data: any) {
+    return apiClient.post('/knowledge-bases', data);
   },
-
-  /**
-   * 更新知识库
-   */
-  async update(kbId: string, data: KnowledgeBaseUpdate): Promise<KnowledgeBase> {
-    const response = await apiClient.put<KnowledgeBase>(`/knowledge-bases/${kbId}`, data);
-    return response.data;
+  async update(id: string, data: any) {
+    return apiClient.put(`/knowledge-bases/${id}`, data);
   },
-
-  /**
-   * 删除知识库
-   */
-  async delete(kbId: string): Promise<{ message: string }> {
-    const response = await apiClient.delete<{ message: string }>(`/knowledge-bases/${kbId}`);
-    return response.data;
+  async delete(id: string) {
+    return apiClient.delete(`/knowledge-bases/${id}`);
   },
 };
-
-// ============ 文档API ============
 
 export const documentAPI = {
-  /**
-   * 获取文档列表
-   */
-  async list(params: {
-    kb_id: string;
-    page?: number;
-    page_size?: number;
-  }): Promise<DocumentListResponse> {
-    const response = await apiClient.get<DocumentListResponse>('/documents', { params });
-    return response.data;
+  async list(params: { kb_id: string; page?: number; page_size?: number }) {
+    const query = new URLSearchParams();
+    query.append('kb_id', params.kb_id);
+    if (params.page) query.append('page', params.page.toString());
+    if (params.page_size) query.append('page_size', params.page_size.toString());
+    return apiClient.get<{ items: any[]; meta: any }>(`/documents?${query}`);
   },
-
-  /**
-   * 上传文档
-   */
-  async upload(kbId: string, file: File): Promise<DocumentUploadResponse> {
+  async upload(kbId: string, file: File) {
     const formData = new FormData();
     formData.append('file', file);
-
-    const response = await apiClient.post<DocumentUploadResponse>(
-      '/documents',
-      formData,
-      {
-        params: { kb_id: kbId },
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      }
-    );
-    return response.data;
+    formData.append('kb_id', kbId);
+    return apiClient.post('/documents/upload', formData, {
+      headers: {}, // 让浏览器自动设置Content-Type: multipart/form-data
+    });
   },
-
-  /**
-   * 获取文档详情
-   */
-  async get(docId: string): Promise<Document> {
-    const response = await apiClient.get<Document>(`/documents/${docId}`);
-    return response.data;
-  },
-
-  /**
-   * 删除文档
-   */
-  async delete(docId: string): Promise<{ message: string }> {
-    const response = await apiClient.delete<{ message: string }>(`/documents/${docId}`);
-    return response.data;
+  async delete(id: string) {
+    return apiClient.delete(`/documents/${id}`);
   },
 };
-
-// ============ 同步任务API ============
 
 export const syncTaskAPI = {
-  /**
-   * 创建同步任务
-   */
-  async create(data: SyncTaskCreate): Promise<SyncTask> {
-    const response = await apiClient.post<SyncTask>('/sync-tasks', data);
-    return response.data;
+  async list(params: { kb_id: string; limit?: number }) {
+    const query = new URLSearchParams();
+    query.append('kb_id', params.kb_id);
+    if (params.limit) query.append('limit', params.limit.toString());
+    return apiClient.get<{ items: any[]; meta: any }>(`/sync-tasks?${query}`);
   },
-
-  /**
-   * 获取同步任务列表
-   */
-  async list(params: {
-    kb_id: string;
-    status?: string;
-    limit?: number;  // 返回数量（后端参数名是limit）
-  }): Promise<SyncTaskListResponse> {
-    const response = await apiClient.get<SyncTaskListResponse>('/sync-tasks', { params });
-    return response.data;
+  async create(data: { kb_id: string; task_type: string; document_ids?: string[] }) {
+    return apiClient.post('/sync-tasks', data);
   },
-
-  /**
-   * 获取同步任务详情
-   */
-  async get(taskId: string): Promise<SyncTask> {
-    const response = await apiClient.get<SyncTask>(`/sync-tasks/${taskId}`);
-    return response.data;
+  async get(id: string) {
+    return apiClient.get(`/sync-tasks/${id}`);
+  },
+  async cancel(id: string) {
+    return apiClient.post(`/sync-tasks/${id}/cancel`);
   },
 };
-
-// ============ 查询API ============
-
-export const queryAPI = {
-  /**
-   * 流式查询（SSE）
-   * 返回ReadableStream，需要手动处理
-   */
-  async stream(kbId: string, query: string): Promise<ReadableStream<Uint8Array>> {
-    const response = await fetch(
-      `${API_BASE_URL}/query/stream?kb_id=${encodeURIComponent(kbId)}&query=${encodeURIComponent(query)}`,
-      {
-        method: 'POST',
-        headers: {
-          'Accept': 'text/event-stream',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    if (!response.body) {
-      throw new Error('Response body is null');
-    }
-
-    return response.body;
-  },
-
-  /**
-   * 获取查询历史列表
-   */
-  async listHistory(params: {
-    kb_id: string;
-    page?: number;
-    page_size?: number;
-  }): Promise<QueryHistoryListResponse> {
-    const response = await apiClient.get<QueryHistoryListResponse>('/query/history', { params });
-    return response.data;
-  },
-
-  /**
-   * 获取查询历史详情
-   */
-  async getHistory(queryId: string): Promise<QueryHistory> {
-    const response = await apiClient.get<QueryHistory>(`/query/history/${queryId}`);
-    return response.data;
-  },
-};
-
-// ============ 健康检查API ============
-
-export const healthAPI = {
-  /**
-   * 检查后端服务健康状态
-   */
-  async check(): Promise<{ status: string; timestamp: string }> {
-    const response = await apiClient.get<{ status: string; timestamp: string }>('/health');
-    return response.data;
-  },
-};
-
-// 导出默认的API客户端
-export default apiClient;

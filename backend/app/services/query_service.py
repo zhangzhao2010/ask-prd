@@ -456,7 +456,8 @@ class QueryService:
     async def execute_query_two_stage(
         db: Session,
         kb_id: str,
-        query_text: str
+        query_text: str,
+        user_id: int
     ) -> AsyncGenerator[Dict, None]:
         """
         使用TwoStageExecutor执行查询并流式返回结果
@@ -465,6 +466,7 @@ class QueryService:
             db: 数据库会话
             kb_id: 知识库ID
             query_text: 用户问题
+            user_id: 用户ID（用于记录查询历史）
 
         Yields:
             流式事件

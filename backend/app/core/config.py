@@ -52,6 +52,26 @@ class Settings(BaseSettings):
     # Marker配置
     marker_use_gpu: bool = True
 
+    # JWT认证配置
+    jwt_secret_key: str = "your-super-secret-jwt-key-change-in-production-min-32-chars"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_days: int = 7
+
+    @property
+    def JWT_SECRET_KEY(self) -> str:
+        """JWT密钥（大写属性，兼容security.py）"""
+        return self.jwt_secret_key
+
+    @property
+    def JWT_ALGORITHM(self) -> str:
+        """JWT算法（大写属性，兼容security.py）"""
+        return self.jwt_algorithm
+
+    @property
+    def JWT_ACCESS_TOKEN_EXPIRE_DAYS(self) -> int:
+        """JWT过期天数（大写属性，兼容security.py）"""
+        return self.jwt_access_token_expire_days
+
     @property
     def database_url(self) -> str:
         """SQLite数据库连接URL"""

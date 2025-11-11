@@ -9,39 +9,65 @@ import {
   Button,
   Table,
   Box,
-  TextFilter,
-  Pagination,
   Badge,
   Modal,
+  Alert,
 } from '@cloudscape-design/components';
-import { knowledgeBaseAPI } from '@/services/api';
-import type { KnowledgeBase } from '@/types';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { PermissionManager } from '@/components/knowledge-base/PermissionManager';
+import { authService } from '@/services/auth';
 import CreateKnowledgeBaseModal from '@/components/knowledge-base/CreateKnowledgeBaseModal';
 
-export default function KnowledgeBasesPage() {
+interface KnowledgeBase {
+  id: string;
+  name: string;
+  description?: string;
+  status: string;
+  local_storage_path?: string;
+  opensearch_index_name?: string;
+  visibility: 'private' | 'public' | 'shared';
+  owner_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function KnowledgeBasesContent() {
   const router = useRouter();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [selectedItems, setSelectedItems] = useState<KnowledgeBase[]>([]);
-  const [filterText, setFilterText] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+
+  // Modal状态
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [permModalVisible, setPermModalVisible] = useState(false);
+  const [selectedKB, setSelectedKB] = useState<KnowledgeBase | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const currentUserId = authService.getUserId();
+  const isAdmin = authService.isAdmin();
 
   // 加载知识库列表
   const loadKnowledgeBases = async () => {
     setLoading(true);
+    setError('');
     try {
-      const response = await knowledgeBaseAPI.list({
-        page: currentPage,
-        page_size: 10,
+      const response = await fetch('/api/v1/knowledge-bases', {
+        headers: {
+          Authorization: `Bearer ${authService.getToken()}`,
+        },
       });
-      setKnowledgeBases(response.items);
-      setTotalPages(response.meta.total_pages);
-    } catch (error) {
-      console.error('Failed to load knowledge bases:', error);
+
+      if (!response.ok) {
+        throw new Error('加载失败');
+      }
+
+      const data = await response.json();
+      setKnowledgeBases(data.items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载知识库列表失败');
     } finally {
       setLoading(false);
     }
@@ -49,13 +75,7 @@ export default function KnowledgeBasesPage() {
 
   useEffect(() => {
     loadKnowledgeBases();
-  }, [currentPage]);
-
-  // 过滤知识库
-  const filteredKnowledgeBases = knowledgeBases.filter((kb) =>
-    kb.name.toLowerCase().includes(filterText.toLowerCase()) ||
-    (kb.description && kb.description.toLowerCase().includes(filterText.toLowerCase()))
-  );
+  }, []);
 
   // 删除知识库
   const handleDelete = async () => {
@@ -64,31 +84,85 @@ export default function KnowledgeBasesPage() {
     setDeleteLoading(true);
     try {
       await Promise.all(
-        selectedItems.map((item) => knowledgeBaseAPI.delete(item.id))
+        selectedItems.map((item) =>
+          fetch(`/api/v1/knowledge-bases/${item.id}`, {
+            method: 'DELETE',
+            headers: {
+              Authorization: `Bearer ${authService.getToken()}`,
+            },
+          })
+        )
       );
+      setSuccess(`已删除 ${selectedItems.length} 个知识库`);
       setDeleteModalVisible(false);
       setSelectedItems([]);
       loadKnowledgeBases();
-    } catch (error) {
-      console.error('Failed to delete knowledge base:', error);
+    } catch (err) {
+      setError('删除失败');
     } finally {
       setDeleteLoading(false);
     }
   };
 
+  // 打开权限管理
+  const handleManagePermissions = (kb: KnowledgeBase) => {
+    setSelectedKB(kb);
+    setPermModalVisible(true);
+  };
+
+  // 可见性Badge
+  const visibilityBadge = (visibility: string, ownerId: number) => {
+    const isOwner = ownerId === currentUserId;
+    const map: Record<string, { text: string; color: any }> = {
+      private: { text: '私有', color: 'red' },
+      public: { text: '公开', color: 'green' },
+      shared: { text: '共享', color: 'blue' },
+    };
+    const config = map[visibility] || { text: visibility, color: 'grey' };
+    return (
+      <SpaceBetween direction="horizontal" size="xs">
+        <Badge color={config.color}>{config.text}</Badge>
+        {isOwner && <Badge>所有者</Badge>}
+        {isAdmin && !isOwner && <Badge color="blue">管理员</Badge>}
+      </SpaceBetween>
+    );
+  };
+
   // 状态Badge
   const statusBadge = (status: string) => {
-    const statusMap: Record<string, { text: string; color: any }> = {
+    const map: Record<string, { text: string; color: any }> = {
       active: { text: '已激活', color: 'green' },
       creating: { text: '创建中', color: 'blue' },
       failed: { text: '失败', color: 'red' },
     };
-    const config = statusMap[status] || { text: status, color: 'grey' };
+    const config = map[status] || { text: status, color: 'grey' };
     return <Badge color={config.color}>{config.text}</Badge>;
+  };
+
+  // 检查是否可以删除
+  const canDelete = (kb: KnowledgeBase) => {
+    return kb.owner_id === currentUserId || isAdmin;
+  };
+
+  // 检查是否可以管理权限
+  const canManagePermissions = (kb: KnowledgeBase) => {
+    return kb.owner_id === currentUserId || isAdmin;
   };
 
   return (
     <SpaceBetween size="l">
+      {error && (
+        <Alert type="error" dismissible onDismiss={() => setError('')}>
+          {error}
+        </Alert>
+      )}
+
+      {success && (
+        <Alert type="success" dismissible onDismiss={() => setSuccess('')}>
+          {success}
+        </Alert>
+      )}
+
       <Container
         header={
           <Header
@@ -108,7 +182,6 @@ export default function KnowledgeBasesPage() {
         }
       >
         <Table
-          stickyHeader={false}
           loading={loading}
           selectedItems={selectedItems}
           onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
@@ -117,7 +190,6 @@ export default function KnowledgeBasesPage() {
               id: 'name',
               header: '名称',
               cell: (item) => item.name,
-              sortingField: 'name',
             },
             {
               id: 'description',
@@ -125,33 +197,19 @@ export default function KnowledgeBasesPage() {
               cell: (item) => item.description || '-',
             },
             {
+              id: 'visibility',
+              header: '可见性',
+              cell: (item) => visibilityBadge(item.visibility, item.owner_id),
+            },
+            {
               id: 'status',
               header: '状态',
               cell: (item) => statusBadge(item.status),
             },
             {
-              id: 'storage_path',
-              header: '存储路径',
-              cell: (item) => (
-                <Box fontSize="body-s" color="text-body-secondary">
-                  {item.local_storage_path || '本地存储'}
-                </Box>
-              ),
-            },
-            {
-              id: 'opensearch_index',
-              header: 'OpenSearch索引',
-              cell: (item) => (
-                <Box fontSize="body-s" color="text-body-secondary">
-                  {item.opensearch_index_name || '-'}
-                </Box>
-              ),
-            },
-            {
               id: 'created_at',
               header: '创建时间',
               cell: (item) => new Date(item.created_at).toLocaleString('zh-CN'),
-              sortingField: 'created_at',
             },
             {
               id: 'actions',
@@ -162,19 +220,27 @@ export default function KnowledgeBasesPage() {
                     variant="inline-link"
                     onClick={() => router.push(`/documents?kb_id=${item.id}`)}
                   >
-                    查看文档
+                    文档
                   </Button>
                   <Button
                     variant="inline-link"
                     onClick={() => router.push(`/query?kb_id=${item.id}`)}
                   >
-                    开始提问
+                    问答
                   </Button>
+                  {canManagePermissions(item) && (
+                    <Button
+                      variant="inline-link"
+                      onClick={() => handleManagePermissions(item)}
+                    >
+                      权限
+                    </Button>
+                  )}
                 </SpaceBetween>
               ),
             },
           ]}
-          items={filteredKnowledgeBases}
+          items={knowledgeBases}
           selectionType="multi"
           trackBy="id"
           empty={
@@ -185,27 +251,20 @@ export default function KnowledgeBasesPage() {
               </Box>
             </Box>
           }
-          filter={
-            <TextFilter
-              filteringText={filterText}
-              onChange={({ detail }) => setFilterText(detail.filteringText)}
-              filteringPlaceholder="搜索知识库"
-            />
-          }
           header={
             <Header
-              counter={`(${filteredKnowledgeBases.length})`}
+              counter={`(${knowledgeBases.length})`}
               actions={
                 <SpaceBetween direction="horizontal" size="xs">
-                  <Button
-                    onClick={loadKnowledgeBases}
-                    iconName="refresh"
-                  >
+                  <Button onClick={loadKnowledgeBases} iconName="refresh">
                     刷新
                   </Button>
                   <Button
                     onClick={() => setDeleteModalVisible(true)}
-                    disabled={selectedItems.length === 0}
+                    disabled={
+                      selectedItems.length === 0 ||
+                      !selectedItems.every(canDelete)
+                    }
                   >
                     删除
                   </Button>
@@ -214,13 +273,6 @@ export default function KnowledgeBasesPage() {
             >
               知识库
             </Header>
-          }
-          pagination={
-            <Pagination
-              currentPageIndex={currentPage}
-              pagesCount={totalPages}
-              onChange={({ detail }) => setCurrentPage(detail.currentPageIndex)}
-            />
           }
         />
       </Container>
@@ -243,10 +295,17 @@ export default function KnowledgeBasesPage() {
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button variant="link" onClick={() => setDeleteModalVisible(false)}>
+              <Button
+                variant="link"
+                onClick={() => setDeleteModalVisible(false)}
+              >
                 取消
               </Button>
-              <Button variant="primary" onClick={handleDelete} loading={deleteLoading}>
+              <Button
+                variant="primary"
+                onClick={handleDelete}
+                loading={deleteLoading}
+              >
                 删除
               </Button>
             </SpaceBetween>
@@ -261,6 +320,32 @@ export default function KnowledgeBasesPage() {
           </Box>
         </Box>
       </Modal>
+
+      {/* 权限管理Modal */}
+      <Modal
+        visible={permModalVisible}
+        onDismiss={() => setPermModalVisible(false)}
+        header={`权限管理 - ${selectedKB?.name}`}
+        size="large"
+      >
+        {selectedKB && (
+          <PermissionManager
+            kbId={selectedKB.id}
+            kbName={selectedKB.name}
+            currentVisibility={selectedKB.visibility}
+            isOwner={canManagePermissions(selectedKB)}
+            onUpdate={loadKnowledgeBases}
+          />
+        )}
+      </Modal>
     </SpaceBetween>
+  );
+}
+
+export default function KnowledgeBasesPage() {
+  return (
+    <ProtectedRoute>
+      <KnowledgeBasesContent />
+    </ProtectedRoute>
   );
 }

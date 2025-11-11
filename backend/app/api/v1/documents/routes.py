@@ -5,6 +5,9 @@ from fastapi import APIRouter, Depends, File, UploadFile, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.logging import get_logger
+from app.core.dependencies import get_current_user
+from app.core.permissions import check_kb_permission, PermissionType
+from app.models.database import User
 from app.models.schemas import (
     DocumentResponse,
     DocumentListResponse,
@@ -21,16 +24,21 @@ router = APIRouter()
 async def upload_document(
     kb_id: str = Query(..., description="知识库ID"),
     file: UploadFile = File(..., description="PDF文件"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    上传文档到知识库
+    上传文档到知识库（需要写权限）
 
+    - 检查用户是否有写权限
     - 文件自动上传到S3
     - 创建文档记录
     - 初始状态为uploaded
     """
-    logger.info("api_upload_document", kb_id=kb_id, filename=file.filename)
+    logger.info("api_upload_document", kb_id=kb_id, filename=file.filename, user_id=current_user.id)
+
+    # 检查写权限
+    check_kb_permission(kb_id, current_user, PermissionType.WRITE, db)
 
     # 验证文件类型
     if not file.filename.lower().endswith('.pdf'):
@@ -65,17 +73,29 @@ async def list_documents(
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
     status: str = Query(None, description="文档状态过滤"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    列出知识库中的文档
+    列出知识库中的文档（需要读权限）
 
+    - 检查用户是否有读权限
     - 分页返回
     - 按创建时间倒序
     - 可按状态过滤
     """
     logger.info(
         "api_list_documents",
+        kb_id=kb_id,
+        page=page,
+        user_id=current_user.id
+    )
+
+    # 检查读权限
+    check_kb_permission(kb_id, current_user, PermissionType.READ, db)
+
+    logger.info(
+        "api_list_documents_old",
         kb_id=kb_id,
         page=page,
         page_size=page_size,
@@ -102,16 +122,22 @@ async def list_documents(
 @router.get("/{doc_id}", response_model=DocumentDetailResponse)
 async def get_document(
     doc_id: str,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    获取文档详情
+    获取文档详情（需要读权限）
 
+    - 检查用户是否有读权限
     - 包含统计信息（chunk数）
     """
-    logger.info("api_get_document", doc_id=doc_id)
+    logger.info("api_get_document", doc_id=doc_id, user_id=current_user.id)
 
     doc = DocumentService.get_document(db, doc_id)
+
+    # 检查读权限
+    check_kb_permission(doc.kb_id, current_user, PermissionType.READ, db)
+
     stats = DocumentService.get_document_stats(db, doc_id)
 
     # 构造详情响应
@@ -126,15 +152,22 @@ async def get_document(
 @router.delete("/{doc_id}", status_code=204)
 async def delete_document(
     doc_id: str,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    删除文档
+    删除文档（需要写权限）
 
+    - 检查用户是否有写权限
     - 软删除数据库记录
     - 真删除S3文件
     """
-    logger.info("api_delete_document", doc_id=doc_id)
+    logger.info("api_delete_document", doc_id=doc_id, user_id=current_user.id)
+
+    doc = DocumentService.get_document(db, doc_id)
+
+    # 检查写权限
+    check_kb_permission(doc.kb_id, current_user, PermissionType.WRITE, db)
 
     DocumentService.delete_document(db, doc_id)
     return None
@@ -144,11 +177,13 @@ async def delete_document(
 async def get_document_image(
     document_id: str,
     image_filename: str,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    获取文档的图片（从本地文件系统）
+    获取文档的图片（从本地文件系统，需要读权限）
 
+    - 检查用户是否有读权限
     - 图片存储在 markdowns/{document_id}/ 目录（与content.md同级）
     - 返回图片二进制数据
     """
@@ -160,7 +195,8 @@ async def get_document_image(
     logger.info(
         "api_get_document_image",
         document_id=document_id,
-        image_filename=image_filename
+        image_filename=image_filename,
+        user_id=current_user.id
     )
 
     # 1. 查询文档获取markdown路径
@@ -171,6 +207,9 @@ async def get_document_image(
             document_id=document_id
         )
         raise HTTPException(404, "Document not found")
+
+    # 2. 检查读权限
+    check_kb_permission(doc.kb_id, current_user, PermissionType.READ, db)
 
     # 2. 构建图片路径（与markdown同目录）
     markdown_dir = Path(doc.local_markdown_path).parent

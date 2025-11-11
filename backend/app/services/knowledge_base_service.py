@@ -30,7 +30,8 @@ class KnowledgeBaseService:
     @staticmethod
     def create_knowledge_base(
         db: Session,
-        kb_data: KnowledgeBaseCreate
+        kb_data: KnowledgeBaseCreate,
+        owner_id: int
     ) -> KnowledgeBase:
         """
         创建知识库
@@ -38,6 +39,7 @@ class KnowledgeBaseService:
         Args:
             db: 数据库会话
             kb_data: 知识库创建数据
+            owner_id: 所有者用户ID
 
         Returns:
             创建的知识库对象
@@ -83,7 +85,9 @@ class KnowledgeBaseService:
                 description=kb_data.description,
                 local_storage_path=local_storage_path,
                 opensearch_index_name=index_name,
-                status="active"
+                status="active",
+                owner_id=owner_id,
+                visibility="private"  # 默认为私有
             )
 
             db.add(kb)
@@ -284,3 +288,67 @@ class KnowledgeBaseService:
             chunk_count=chunk_count,
             total_size_bytes=total_size
         )
+
+    @staticmethod
+    def list_knowledge_bases_for_user(
+        db: Session,
+        user,  # User对象
+        page: int = 1,
+        page_size: int = 20
+    ) -> Tuple[List[KnowledgeBase], int]:
+        """
+        根据用户权限列出知识库
+
+        Args:
+            db: 数据库会话
+            user: 当前用户对象
+            page: 页码（从1开始）
+            page_size: 每页数量
+
+        Returns:
+            (知识库列表, 总数)
+        """
+        from app.models.database import KBPermission
+
+        # 管理员可以看到所有
+        if user.role == "admin":
+            query = db.query(KnowledgeBase).filter(KnowledgeBase.status == "active")
+            total = query.count()
+            kbs = query.order_by(KnowledgeBase.created_at.desc()).offset(
+                (page - 1) * page_size
+            ).limit(page_size).all()
+            return kbs, total
+
+        # 普通用户：自己创建的 + public + 被共享的
+        # 1. 自己创建的
+        owned_query = db.query(KnowledgeBase).filter(
+            KnowledgeBase.owner_id == user.id,
+            KnowledgeBase.status == "active"
+        )
+
+        # 2. 公开的
+        public_query = db.query(KnowledgeBase).filter(
+            KnowledgeBase.visibility == "public",
+            KnowledgeBase.status == "active"
+        )
+
+        # 3. 被共享的
+        shared_kb_ids = db.query(KBPermission.kb_id).filter(
+            KBPermission.user_id == user.id
+        ).subquery()
+
+        shared_query = db.query(KnowledgeBase).filter(
+            KnowledgeBase.id.in_(shared_kb_ids),
+            KnowledgeBase.status == "active"
+        )
+
+        # 合并查询（使用UNION）
+        combined_query = owned_query.union(public_query, shared_query)
+
+        # 获取总数和分页结果
+        total = combined_query.count()
+        kbs = combined_query.order_by(KnowledgeBase.created_at.desc()).offset(
+            (page - 1) * page_size
+        ).limit(page_size).all()
+
+        return kbs, total

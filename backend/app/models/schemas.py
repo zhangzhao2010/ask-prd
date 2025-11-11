@@ -61,6 +61,8 @@ class KnowledgeBaseResponse(BaseResponse):
     opensearch_collection_id: Optional[str]
     opensearch_index_name: Optional[str]
     status: str
+    owner_id: int  # 所有者用户ID
+    visibility: str  # private | public | shared
     created_at: datetime
     updated_at: datetime
 
@@ -257,3 +259,137 @@ class ErrorEvent(StreamEvent):
     error_code: str
     message: str
     details: Dict[str, Any] = {}
+
+
+# ============ 用户相关模型 ============
+
+class UserBase(BaseModel):
+    """用户基础模型"""
+    username: str = Field(..., min_length=1, max_length=50, description="用户名")
+
+
+class UserCreate(UserBase):
+    """创建用户请求"""
+    password: str = Field(..., min_length=1, description="密码")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "username": "john_doe",
+                "password": "password123"
+            }
+        }
+    )
+
+
+class UserResponse(BaseResponse):
+    """用户响应"""
+    id: int
+    username: str
+    role: str  # admin | user
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserListResponse(BaseModel):
+    """用户列表响应"""
+    items: List[UserResponse]
+    total: int
+
+
+class LoginRequest(BaseModel):
+    """登录请求"""
+    username: str = Field(..., description="用户名")
+    password: str = Field(..., description="密码")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "username": "admin",
+                "password": "admin123"
+            }
+        }
+    )
+
+
+class LoginResponse(BaseModel):
+    """登录响应"""
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
+
+class ChangePasswordRequest(BaseModel):
+    """修改密码请求"""
+    old_password: str = Field(..., description="旧密码")
+    new_password: str = Field(..., min_length=6, description="新密码（至少6位）")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "old_password": "admin123",
+                "new_password": "newpassword123"
+            }
+        }
+    )
+
+
+# ============ 知识库权限相关模型 ============
+
+class KBPermissionCreate(BaseModel):
+    """创建知识库权限请求"""
+    username: str = Field(..., description="用户名")
+    permission_type: str = Field(..., description="权限类型: read | write")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "username": "john_doe",
+                "permission_type": "read"
+            }
+        }
+    )
+
+
+class KBPermissionUpdate(BaseModel):
+    """更新知识库权限请求"""
+    permission_type: str = Field(..., description="权限类型: read | write")
+
+
+class KBPermissionResponse(BaseResponse):
+    """知识库权限响应"""
+    id: int
+    kb_id: str
+    user_id: int
+    username: str  # 用户名（从关联查询）
+    permission_type: str  # read | write
+    granted_by: int
+    created_at: datetime
+
+
+class KBPermissionListResponse(BaseModel):
+    """知识库权限列表响应"""
+    permissions: List[KBPermissionResponse]
+
+
+class KBVisibilityUpdate(BaseModel):
+    """更新知识库可见性请求"""
+    visibility: str = Field(..., description="可见性: private | public | shared")
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "visibility": "shared"
+            }
+        }
+    )
+
+
+# ============ 更新KnowledgeBase相关模型，添加owner和visibility ============
+
+class KnowledgeBaseResponseWithOwner(KnowledgeBaseResponse):
+    """知识库响应（包含所有者和可见性信息）"""
+    owner_id: int
+    visibility: str  # private | public | shared
+    owner_username: Optional[str] = None  # 所有者用户名（从关联查询）

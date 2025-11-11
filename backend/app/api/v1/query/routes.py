@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.logging import get_logger
+from app.core.dependencies import get_current_user
+from app.core.permissions import check_kb_permission, PermissionType
+from app.models.database import User
 from app.services.query_service import query_service
 
 logger = get_logger(__name__)
@@ -19,29 +22,37 @@ router = APIRouter()
 async def query_stream(
     kb_id: str = Query(..., description="知识库ID"),
     query: str = Query(..., min_length=1, max_length=1000, description="用户问题"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    流式问答接口（SSE）
+    流式问答接口（SSE，需要读权限）
 
+    - 检查用户是否有读权限
     - 实时返回答案生成过程
     - 支持状态更新、文本增量、完成事件
     - Content-Type: text/event-stream
+    - 记录查询历史（关联user_id）
     """
     logger.info(
         "api_query_stream",
         kb_id=kb_id,
-        query=query[:100]
+        query=query[:100],
+        user_id=current_user.id
     )
+
+    # 检查读权限
+    check_kb_permission(kb_id, current_user, PermissionType.READ, db)
 
     async def event_generator():
         """SSE事件生成器"""
         try:
-            # 使用新的Two-Stage执行器
+            # 使用新的Two-Stage执行器（传入user_id）
             async for event in query_service.execute_query_two_stage(
                 db=db,
                 kb_id=kb_id,
-                query_text=query
+                query_text=query,
+                user_id=current_user.id
             ):
                 # 构建SSE事件
                 event_type = event.get("type", "unknown")
