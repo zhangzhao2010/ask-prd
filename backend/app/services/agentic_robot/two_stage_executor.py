@@ -17,23 +17,29 @@ logger = get_logger(__name__)
 
 # Prompt模板
 STAGE1_PROMPT_TEMPLATE = """以下是一份产品文档的完整内容，包含文字和图片。
-文档中的每个段落都有标记 [DOC-{doc_short_id}-PARA-X]，每张图片都有标记 [DOC-{doc_short_id}-IMAGE-X]。
 
-请仔细阅读文档（包括图片中的信息），然后按照以下格式回复：
+文档中的图片会以 [图片: filename.ext] 的格式标注文件名，紧接着是图片的视觉内容。
 
-## 文档结构
-[简要描述文档的主题、版本、日期等元信息，1-2句话]
-[列出文档的主要分块，每个分块一行，格式：- [DOC-xxx-PARA-X] 分块主题]
+请仔细阅读文档（包括图片中的信息），然后回答用户的问题。
 
-## query的回复
-[基于本文档内容回答用户问题，务必在相关内容后标注引用来源，例如：根据[DOC-xxx-PARA-5]的描述...]
+**回答要求**：
+1. **引用原文**：在回答时，直接引用文档中的相关原文片段。例如：
+   - "根据文档描述：'用户可以通过手机号或邮箱登录'，系统支持多种登录方式。"
 
-## 引用
-[列出所有引用的段落和图片，每个引用占一行：]
-[DOC-xxx-PARA-X] 段落完整内容...
-[DOC-xxx-IMAGE-X] 图片文件名
+2. **引用图片**：如果需要引用图片，必须使用文档中标注的准确文件名，格式为markdown。例如：
+   - 如果看到 [图片: _page_0_Figure_0.jpeg]，则引用为：`![匹配流程图](_page_0_Figure_0.jpeg)`
+   - **重要**：文件名必须与 [图片: xxx] 标注中的文件名完全一致，包括扩展名和下划线
+   - 不要使用 image1.png, image2.png 等自己编造的文件名
+
+3. **自然融入**：引用的原文和图片应该自然地融入你的回答中，保持语句通顺
+
+4. **准确性**：只基于文档内容回答，不要编造信息。如果文档中没有相关信息，明确说明
+
+5. **Markdown格式**：使用Markdown格式输出，可以使用标题、列表、引用块等格式
 
 用户问题：{query}
+
+请开始回答：
 """
 
 STAGE2_PROMPT_TEMPLATE = """我已经让{doc_count}个助手分别阅读了相关文档，并基于这些文档回答了用户的问题。
@@ -44,33 +50,40 @@ STAGE2_PROMPT_TEMPLATE = """我已经让{doc_count}个助手分别阅读了相�
 
 现在请你综合这些回复，给出一个完整、准确、结构清晰的最终答案。
 
-**输出格式要求**：
-请使用Markdown格式输出，包含两个部分：
+**回答要求**：
 
-## 综合回复
-[在这里给出完整答案，必须在相关内容后标注引用来源，例如：根据[DOC-xxx-PARA-5]的描述...]
-[如果引用图片，使用 [DOC-xxx-IMAGE-X] 标记]
+1. **综合信息**：整合所有文档的相关信息，给出完整的答案
 
-## 引用文档
+2. **保留引用**：
+   - 在回答中保留助手们引用的原文片段，并标注来源文档名称
+   - 格式示例：根据《产品PRD v1.0.pdf》的描述："用户可以通过手机号或邮箱登录"
+   - 图片引用保持markdown格式，并在后面标注来源：![登录流程](login_flow.png) *（来源：产品PRD v1.0.pdf）*
 
-### 文档1：[文档名称]
-- [DOC-xxx-PARA-X] 段落内容...
-- [DOC-xxx-IMAGE-X] 图片：filename.png
+3. **处理冲突**：
+   - 如果不同文档的信息有冲突，明确指出差异
+   - 分析可能的原因（例如版本不同、场景不同等）
 
-### 文档2：[文档名称]
-- ...
+4. **处理互补**：
+   - 如果不同文档的信息互补，整合成完整答案
+   - 按时间顺序或逻辑顺序组织（如果是演进历史类问题）
 
-**关键要求**：
-1. **必须保持引用标记**：每次提到文档中的信息时，必须在相关句子后添加引用标记，格式为 [DOC-xxx-PARA-X] 或 [DOC-xxx-IMAGE-X]
-   - 例如："登录功能支持手机号和邮箱[DOC-abc12345-PARA-3]"
-   - 例如："如下图所示[DOC-abc12345-IMAGE-1]，系统架构包含..."
-2. 如果多个文档的回复有冲突，请指出差异并说明可能的原因
-3. 如果多个文档的回复互补，请整合成完整答案
-4. 答案要自然流畅，不要简单罗列
-5. 在"引用文档"部分，列出所有在"综合回复"中引用的段落和图片
-6. 图片引用格式：- [DOC-xxx-IMAGE-X] 图片：filename.png
+5. **Markdown格式**：
+   - 使用结构清晰的Markdown格式
+   - 可以使用标题、列表、引用块、表格等
+   - **表格格式要求**：每行必须单独占一行，使用标准的markdown表格格式，例如：
+     ```
+     | 列1 | 列2 |
+     |-----|-----|
+     | 数据1 | 数据2 |
+     | 数据3 | 数据4 |
+     ```
+   - 保持答案自然流畅，不要简单罗列
+
+6. **去重**：如果多个文档引用了相同或相似的内容，可以合并引用，标注所有来源文档
 
 用户问题：{query}
+
+请开始综合回答：
 """
 
 
@@ -231,33 +244,30 @@ class TwoStageExecutor:
                 response_preview=markdown_response[:500]
             )
 
-            # 流式输出Markdown（逐字发送，模拟流式效果）
-            import asyncio
-            for i in range(0, len(markdown_response), 10):  # 每次发送10个字符
-                chunk = markdown_response[i:i+10]
-                yield {
-                    "type": "answer_delta",
-                    "data": {"text": chunk}
-                }
-                await asyncio.sleep(0.01)  # 短暂延迟，模拟流式效果
+            # 修复表格格式（确保表格每行单独占一行）
+            markdown_response = self._fix_table_format(markdown_response)
+
+            # 转换图片路径为完整的API路径
+            markdown_response = self._convert_image_paths(markdown_response, stage1_results)
+
+            logger.info(
+                "markdown_post_processing_completed",
+                response_length=len(markdown_response)
+            )
+
+            # 一次性返回完整答案（不再流式输出）
+            yield {
+                "type": "answer_delta",
+                "data": {"text": markdown_response}
+            }
 
             logger.info(
                 "stage2_completed",
                 answer_length=len(markdown_response)
             )
 
-            # 提取答案中的引用并发送references事件
-            references = self._extract_references_from_markdown(markdown_response, stage1_results)
-
-            if references:
-                logger.info(
-                    "sending_references",
-                    references_count=len(references)
-                )
-                yield {
-                    "type": "references",
-                    "data": references
-                }
+            # 注意：引用已经嵌入在markdown答案中，不再需要单独的references事件
+            # 前端在渲染markdown时，会自动处理图片链接的转换
 
             # 完成
             yield {
@@ -365,10 +375,7 @@ class TwoStageExecutor:
         from app.core.config import settings
 
         # 构建prompt文本
-        prompt_text = STAGE1_PROMPT_TEMPLATE.format(
-            doc_short_id=processed_doc.doc_short_id,
-            query=query
-        )
+        prompt_text = STAGE1_PROMPT_TEMPLATE.format(query=query)
 
         # 构建完整的messages（包含prompt和图文混排content）
         messages = [
@@ -846,6 +853,103 @@ class TwoStageExecutor:
         )
 
         return references
+
+    def _fix_table_format(self, markdown_text: str) -> str:
+        """
+        修复markdown表格格式
+        确保表格的每一行都单独占一行
+
+        Args:
+            markdown_text: 原始markdown文本
+
+        Returns:
+            修复后的markdown文本
+        """
+        import re
+
+        # 检测并修复表格格式：将 | xxx | | yyy | 转换为换行分隔
+        # 匹配模式：以 | 结尾，后面紧跟空格和另一个 |
+        # 例如：| 列1 | 列2 | |-----|----- 应该变成两行
+
+        # 替换 "| 内容 | |" 为 "| 内容 |\n|"
+        fixed_text = re.sub(r'\|\s+\|', '|\n|', markdown_text)
+
+        # 检测是否有修复
+        if fixed_text != markdown_text:
+            logger.info(
+                "table_format_fixed",
+                original_length=len(markdown_text),
+                fixed_length=len(fixed_text),
+                changes=len(fixed_text) - len(markdown_text)
+            )
+
+        return fixed_text
+
+    def _convert_image_paths(
+        self,
+        markdown_text: str,
+        stage1_results: List[Stage1Result]
+    ) -> str:
+        """
+        转换markdown中的图片路径为完整的API路径
+
+        Args:
+            markdown_text: 原始markdown文本
+            stage1_results: Stage 1结果列表
+
+        Returns:
+            转换后的markdown文本
+        """
+        import re
+
+        # 匹配markdown中的图片：![alt](filename)
+        pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+
+        def replace_image_path(match):
+            alt_text = match.group(1)
+            filename = match.group(2)
+
+            # 跳过已经是完整路径的情况
+            if filename.startswith('http') or filename.startswith('/api/'):
+                return match.group(0)
+
+            # 从stage1_results中查找这个文件名对应的document_id
+            for result in stage1_results:
+                # 检查references_map中是否有这个文件名
+                for ref_id, ref_content in result.references_map.items():
+                    if ref_content == filename:
+                        # 找到了，构建完整路径
+                        full_path = f"/api/v1/documents/{result.doc_id}/images/{filename}"
+                        logger.debug(
+                            "converting_image_path",
+                            filename=filename,
+                            doc_id=result.doc_id,
+                            full_path=full_path
+                        )
+                        return f"![{alt_text}]({full_path})"
+
+            # 如果没找到对应的document_id，保持原样（但记录警告）
+            logger.warning(
+                "image_file_not_found_in_references",
+                filename=filename,
+                available_images=[
+                    ref_content
+                    for result in stage1_results
+                    for ref_id, ref_content in result.references_map.items()
+                ]
+            )
+            return match.group(0)
+
+        # 替换所有图片路径
+        converted_text = re.sub(pattern, replace_image_path, markdown_text)
+
+        logger.info(
+            "image_paths_conversion_completed",
+            original_length=len(markdown_text),
+            converted_length=len(converted_text)
+        )
+
+        return converted_text
 
     def _build_stage2_prompt(self, query: str, stage1_results: List[Stage1Result]) -> str:
         """

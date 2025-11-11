@@ -6,19 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ASK-PRD 是一个基于PRD文档的智能检索问答系统（Demo项目），使用Multi-Agent架构实现图文混排文档的深度理解和智能问答。
 
-**当前状态**：Phase 1-4已完成，后端和前端核心功能已实现
+**当前状态**：✅ Phase 1-4已完成并通过测试，系统已具备生产级别的功能完整性
 
 **技术栈核心**：
 - 后端：Python 3.12 + FastAPI + SQLAlchemy + SQLite
-- Agent框架：Strands Agents SDK（用于Multi-Agent实现）
-- 前端：Next.js 16 + AWS Cloudscape Design System + TypeScript
+- Agent框架：Strands Agents SDK 1.14.0（用于Multi-Agent实现）
+- 前端：Next.js 15.1.4 + AWS Cloudscape Design System + TypeScript + React 19
 - AI服务：AWS Bedrock
   - Region: us-west-2（已配置所需权限）
   - Model: Claude Sonnet 4.5 (global.anthropic.claude-sonnet-4-5-20250929-v1:0)
-  - Embeddings: Titan Embeddings V2 (amazon.titan-embed-text-v2:0)
+  - Embeddings: Titan Embeddings V2 (amazon.titan-embed-text-v2:0, 1024维)
   - 通过Strands BedrockModel集成
 - 向量数据库：Amazon OpenSearch Serverless
-- PDF转换：marker（需要GPU支持）
+- PDF转换：marker 1.10.0+（需要GPU支持）
 
 ## 系统架构要点
 
@@ -142,6 +142,7 @@ ASK-PRD 是一个基于PRD文档的智能检索问答系统（Demo项目），�
 
 ```bash
 # 环境准备
+cd backend
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
@@ -149,43 +150,74 @@ pip install -r requirements.txt
 # 数据库初始化
 python scripts/init_db.py
 
-# 运行开发服务器
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# 运行开发服务器（推荐方式）
+python -m app.main
+
+# 或使用uvicorn
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 # 调试模式
-uvicorn main:app --reload --log-level debug
+LOG_LEVEL=DEBUG python -m app.main
 
-# 测试
+# 查看API文档（开发模式）
+# 访问 http://localhost:8000/docs (Swagger UI)
+# 访问 http://localhost:8000/redoc (ReDoc)
+# 访问 http://localhost:8000/health (健康检查)
+
+# 测试脚本（scripts/目录下）
+python scripts/test_agents.py              # Agent系统测试
+python scripts/test_chunking.py            # 分块服务测试
+python scripts/test_conversion.py          # PDF转换测试
+python scripts/test_sync_system.py         # 同步系统测试
+python scripts/test_query_system.py        # 完整查询系统测试
+python scripts/test_embedding_performance.py  # Embedding性能测试
+
+# 单个文档同步测试
+python test_sync_single.py
+
+# 单元测试
 pytest
 pytest tests/test_specific.py  # 运行单个测试文件
-pytest -v -s  # 详细输出
+pytest -v -s                   # 详细输出
 
 # 代码格式化和检查
-black .
-isort .
-mypy .
+black app/ tests/ scripts/
+isort app/ tests/ scripts/
+mypy app/
 
-# 数据库迁移
+# 数据库操作
+# 查看数据库
+sqlite3 data/aks-prd.db ".tables"
+sqlite3 data/aks-prd.db ".schema knowledge_bases"
+
+# 数据库迁移（如果使用alembic）
 alembic revision --autogenerate -m "description"  # 创建迁移
-alembic upgrade head  # 执行迁移
-alembic downgrade -1  # 回滚迁移
+alembic upgrade head                              # 执行迁移
+alembic downgrade -1                              # 回滚迁移
 ```
 
 ### 前端开发（frontend/目录）
 
 ```bash
 # 安装依赖
+cd frontend
 npm install
 
-# 开发服务器
+# 开发服务器（带启动脚本）
+./start-dev.sh
+
+# 或直接运行
 npm run dev
+
+# 访问前端
+# http://localhost:3000
 
 # 构建生产版本
 npm run build
+npm run start
 
-# 代码格式化和类型检查
-npm run format
-npm run type-check
+# Lint和类型检查
+npm run lint
 ```
 
 ### AWS服务配置
@@ -201,11 +233,99 @@ aws configure
 # - Bedrock: 调用模型权限
 #   - Claude Sonnet 4.5 (global.anthropic.claude-sonnet-4-5-20250929-v1:0)
 #   - Titan Embeddings V2 (amazon.titan-embed-text-v2:0)
+
+# 测试AWS连接
+aws s3 ls s3://your-bucket/
+aws bedrock list-foundation-models --region us-west-2
+```
+
+## 项目结构
+
+### 后端结构
+
+```
+backend/
+├── app/
+│   ├── api/v1/          # API路由
+│   │   ├── knowledge_bases/  # 知识库管理
+│   │   ├── documents/        # 文档管理
+│   │   ├── sync_tasks/       # 同步任务
+│   │   ├── query/            # 检索问答
+│   │   └── chunks/           # Chunks管理
+│   ├── models/          # SQLAlchemy模型和Pydantic schemas
+│   │   ├── database.py       # ORM模型
+│   │   └── schemas.py        # API数据模型
+│   ├── services/        # 业务逻辑层
+│   │   ├── knowledge_base_service.py
+│   │   ├── document_service.py
+│   │   ├── conversion_service.py    # PDF转换（Marker）
+│   │   ├── chunking_service.py      # 文本分块
+│   │   ├── embedding_service.py     # 向量化
+│   │   ├── task_service.py          # 任务管理
+│   │   ├── query_service.py         # 查询服务
+│   │   ├── document_loader.py       # 文档加载
+│   │   ├── document_processor.py    # 文档处理
+│   │   ├── reference_extractor.py   # 引用提取
+│   │   └── agentic_robot/           # Agent系统目录
+│   ├── agents/          # Strands Agent实现
+│   │   ├── tools/
+│   │   │   └── document_tools.py    # 文档读取工具
+│   │   ├── sub_agent.py             # Sub-Agent
+│   │   └── main_agent.py            # Main-Agent
+│   ├── workers/         # 后台任务
+│   │   └── sync_worker.py           # 同步Worker（异步处理PDF转换和索引）
+│   ├── utils/           # 工具函数
+│   │   ├── s3_client.py             # S3客户端
+│   │   ├── opensearch_client.py     # OpenSearch客户端
+│   │   └── bedrock_client.py        # Bedrock客户端（Strands集成）
+│   ├── core/            # 核心配置
+│   │   ├── config.py                # 配置管理
+│   │   ├── database.py              # 数据库连接
+│   │   ├── logging.py               # 日志配置
+│   │   └── errors.py                # 异常定义
+│   └── main.py          # FastAPI应用入口
+├── scripts/             # 测试和工具脚本
+│   ├── init_db.py                   # 数据库初始化
+│   ├── test_agents.py               # Agent测试
+│   ├── test_chunking.py             # 分块测试
+│   ├── test_conversion.py           # 转换测试
+│   ├── test_sync_system.py          # 同步测试
+│   ├── test_query_system.py         # 查询测试
+│   └── test_embedding_performance.py # 性能测试
+├── tests/               # 单元测试
+├── data/                # 数据目录
+│   ├── aks-prd.db       # SQLite数据库
+│   └── cache/           # 本地文件缓存
+│       ├── documents/   # 文档缓存
+│       └── temp/        # 临时文件
+├── requirements.txt     # Python依赖
+├── .env                 # 环境变量
+└── README.md            # 项目说明
+```
+
+### 前端结构
+
+```
+frontend/
+├── app/                 # Next.js App Router
+│   ├── layout.tsx       # 根布局
+│   ├── page.tsx         # 首页
+│   └── knowledge-bases/ # 知识库页面
+├── components/          # React组件
+│   ├── common/          # 通用组件
+│   ├── documents/       # 文档管理组件
+│   ├── knowledge-bases/ # 知识库管理组件
+│   └── query/           # 查询组件
+├── services/            # API服务
+│   └── api.ts           # 后端API调用
+├── types/               # TypeScript类型定义
+├── lib/                 # 工具函数
+└── public/              # 静态资源
 ```
 
 ## 数据库架构
 
-### SQLite表结构（4张核心表）
+### SQLite表结构（5张核心表）
 
 - `knowledge_bases`: 知识库元数据，关联S3和OpenSearch
 - `documents`: 文档元数据，记录PDF和转换后的Markdown路径
@@ -213,6 +333,7 @@ aws configure
 - `chunks`: 统一的文本/图片块表，通过`chunk_type`字段区分（'text' | 'image'）
   - 图片chunk包含：`image_s3_key`（S3路径）和`image_local_path`（本地缓存路径）
 - `sync_tasks`: 异步同步任务，管理PDF处理流程
+- `query_history`: 查询历史记录（包含Token统计）
 
 **路径管理原则**：
 - **S3路径**：必须存储，是唯一真实数据源
@@ -281,7 +402,7 @@ s3://bucket/prds/product-a/           # S3 prefix (知识库配置)
 
 - 删除操作使用事务确保多个数据源的一致性
 - 外键级联删除：删除知识库自动删除关联的documents和chunks
-- SQLite配置建议启用WAL模式提升并发性能
+- SQLite配置已启用WAL模式提升并发性能
 
 ### 流式输出
 
@@ -325,43 +446,55 @@ s3://bucket/prds/product-a/           # S3 prefix (知识库配置)
 - `api-*.md`: 各模块的API接口设计
 - `error-handling.md`: 错误码规范
 - `TODO.md` + `todo-phase*.md`: 开发任务清单
+- `design-*.md`: 设计文档（本地存储、两阶段查询等）
 
 ## Python依赖（requirements.txt）
 
 核心依赖包括：
 
 ```txt
-# Agent框架
+# Web框架
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# Strands Agent框架
 strands-agents>=0.1.0
 
-# Web框架
-fastapi>=0.100.0
-uvicorn[standard]>=0.23.0
-
 # 数据库
-sqlalchemy>=2.0.0
-alembic>=1.11.0
+sqlalchemy>=2.0.35
+alembic>=1.13.0
 
 # AWS SDK
-boto3>=1.28.0
-opensearch-py>=2.3.0
+boto3>=1.35.0
+opensearch-py>=2.7.0
+requests-aws4auth>=1.2.0
 
-# PDF处理
-marker-pdf>=0.1.0  # 需要GPU支持
+# PDF处理（需要GPU支持）
+marker-pdf>=1.10.0
 
 # 文本处理
-langchain>=0.1.0
-langchain-text-splitters>=0.0.1
+langchain>=0.3.0
+langchain-text-splitters>=0.3.0
+tiktoken>=0.7.0
 
 # 数据验证
-pydantic>=2.0.0
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
 
 # 日志
-structlog>=23.1.0
+structlog>=24.4.0
 
-# 异步任务（可选）
-celery>=5.3.0
-redis>=4.6.0
+# 工具库
+python-dotenv>=1.0.0
+httpx>=0.27.0
+
+# 开发依赖
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+black>=24.8.0
+isort>=5.13.0
+mypy>=1.11.0
 ```
 
 ## 环境变量配置
@@ -370,6 +503,9 @@ redis>=4.6.0
 # AWS配置
 AWS_REGION=us-west-2
 S3_BUCKET=your-bucket
+S3_PREFIX=aks-prd/
+
+# OpenSearch配置
 OPENSEARCH_ENDPOINT=your-opensearch-endpoint
 
 # Bedrock配置（Strands会自动使用这些配置）
@@ -378,27 +514,162 @@ EMBEDDING_MODEL_ID=amazon.titan-embed-text-v2:0
 GENERATION_MODEL_ID=global.anthropic.claude-sonnet-4-5-20250929-v1:0
 
 # 数据库配置
-DATABASE_PATH=/data/aks-prd.db
+DATABASE_PATH=./data/aks-prd.db
 
 # 缓存配置
-CACHE_DIR=/data/cache
+CACHE_DIR=./data/cache
 MAX_CACHE_SIZE_MB=2048
 
 # 服务配置
 API_HOST=0.0.0.0
 API_PORT=8000
-DEBUG=false
+DEBUG=true
+LOG_LEVEL=INFO
 
 # 注意：当前开发服务器已配置所需的AWS权限，无需手动设置AccessKey
 ```
 
-## 开发优先级
+## 已完成功能
 
-项目按5个Phase开发（见docs/TODO.md）：
-1. Phase 1: 项目初始化和基础框架（当前阶段）
-2. Phase 2: 知识库构建系统
-3. Phase 3: 检索问答系统
-4. Phase 4: 前端开发
-5. Phase 5: 测试和优化
+### ✅ Phase 1-4: 核心功能（已完成并测试）
 
-**当前状态**：Phase 1未开始，需要先创建backend/和frontend/目录结构
+1. **文档管理系统**
+   - PDF文档上传到S3
+   - 文档列表、详情、删除
+   - 文档状态管理（pending/processing/completed/failed）
+   - 文档统计信息
+
+2. **知识库管理**
+   - 知识库CRUD操作
+   - 自动创建OpenSearch索引
+   - 知识库统计信息
+   - 软删除DB + 硬删除OpenSearch
+
+3. **PDF转换服务**
+   - Marker集成（GPU加速）
+   - PDF转Markdown（保留格式）
+   - 图片自动提取
+   - Bedrock Vision生成图片描述
+
+4. **文本处理**
+   - 智能分块（LangChain RecursiveCharacterTextSplitter）
+   - 中文优化分隔符
+   - 图片引用识别
+   - 图片上下文提取
+
+5. **向量化和索引**
+   - 批量生成Embeddings（Titan V2, 1024维）
+   - 文本和图片统一向量化
+   - OpenSearch批量索引（bulk API）
+
+6. **同步任务系统**
+   - 异步任务管理（创建、查询、取消）
+   - 完整9步处理流程
+   - 任务冲突检测
+   - 进度跟踪和错误处理
+
+7. **Multi-Agent智能问答**
+   - Sub-Agent（文档深度阅读）
+   - Main-Agent（结果综合）
+   - Strands框架集成
+   - Agent工具系统（@tool装饰器）
+   - 并发控制（Semaphore）
+
+8. **智能检索和问答**
+   - Hybrid Search（向量 + BM25 + RRF）
+   - 流式问答（SSE）
+   - 查询历史记录
+   - Token统计和响应时间追踪
+
+9. **前端界面**
+   - Next.js + AWS Cloudscape Design System
+   - 知识库管理界面
+   - 文档上传和管理
+   - 同步任务管理
+   - 流式问答界面
+
+## 测试状态
+
+### 已测试模块
+- ✅ 知识库API（完整测试）
+- ✅ 文档API（完整测试）
+- ✅ AWS工具类（S3/OpenSearch/Bedrock）
+- ✅ PDF转换服务
+- ✅ 文本分块服务
+- ✅ 向量化服务
+- ✅ 同步任务系统
+- ✅ Agent系统
+- ✅ 查询系统
+
+### 测试脚本位置
+- `backend/scripts/test_agents.py` - Agent系统测试
+- `backend/scripts/test_chunking.py` - 分块服务测试
+- `backend/scripts/test_conversion.py` - 转换服务测试
+- `backend/scripts/test_sync_system.py` - 同步系统测试
+- `backend/scripts/test_query_system.py` - 查询系统测试
+- `backend/scripts/test_embedding_performance.py` - Embedding性能测试
+
+## 性能优化要点
+
+1. **本地缓存策略**：优先使用本地缓存，S3作为备份，LRU清理策略
+2. **批量处理**：Embedding批量生成（batch_size: 25）、OpenSearch批量索引（bulk API）
+3. **并发控制**：Sub-Agent并发执行（asyncio）、Semaphore限流（max: 5）
+4. **数据库优化**：SQLite WAL模式、索引优化、连接池管理
+
+## 已知限制
+
+1. **Marker依赖GPU**：PDF转换需要GPU支持（推荐NVIDIA T4或更好）
+2. **并发限制**：Sub-Agent并发数限制为5，避免Bedrock限流
+3. **SQLite单机**：当前使用SQLite，不支持多实例部署（可迁移到RDS）
+4. **无认证**：当前版本无用户认证和权限管理
+
+## 常见问题排查
+
+### 启动失败
+```bash
+# 检查Python版本
+python --version  # 需要3.12+
+
+# 检查依赖
+pip list | grep -E "fastapi|strands|boto3"
+
+# 检查数据库
+ls -lh backend/data/aks-prd.db
+
+# 重新初始化数据库
+rm backend/data/aks-prd.db*
+cd backend && python scripts/init_db.py
+```
+
+### AWS连接问题
+```bash
+# 检查AWS配置
+aws configure list
+aws sts get-caller-identity
+
+# 测试S3访问
+aws s3 ls s3://your-bucket/
+
+# 测试Bedrock访问
+aws bedrock list-foundation-models --region us-west-2
+```
+
+### OpenSearch连接失败
+```bash
+# 检查endpoint配置
+echo $OPENSEARCH_ENDPOINT
+
+# 测试连接
+curl -X GET "https://$OPENSEARCH_ENDPOINT/_cluster/health"
+```
+
+## 下一步改进方向（可选）
+
+- [ ] 用户认证和权限管理
+- [ ] 多租户支持
+- [ ] 缓存自动清理（LRU）
+- [ ] 监控和告警
+- [ ] Metrics收集
+- [ ] 单元测试覆盖率提升
+- [ ] 性能压力测试
+- [ ] 迁移到RDS（生产环境）

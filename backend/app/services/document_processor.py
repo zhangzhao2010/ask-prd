@@ -116,8 +116,8 @@ class DocumentProcessor:
         doc_short_id: str
     ) -> Tuple[List[Dict], Dict[str, str]]:
         """
-        构建图文混排content
-        按照Markdown中的顺序，交替插入文本段落和图片
+        构建图文混排content（改进版：不分段）
+        按照Markdown中的顺序，交替插入完整文本和图片
 
         Args:
             markdown_text: Markdown文本
@@ -135,7 +135,7 @@ class DocumentProcessor:
         )
 
         content = []
-        references_map = {}
+        references_map = {}  # 只保存图片信息
 
         # 1. 解析Markdown中的图片位置和文件名
         # 匹配 ![](filename.ext) 格式
@@ -156,32 +156,14 @@ class DocumentProcessor:
         )
 
         # 2. 按位置交替插入文本和图片
-        para_counter = 1
         img_counter = 1
         last_pos = 0
 
         for pos, img_filename, img_ref in images_in_md:
-            # 处理图片前的文本
+            # 处理图片前的文本（不分段，保持完整）
             text_before = markdown_text[last_pos:pos].strip()
             if text_before:
-                # 分割成段落
-                paragraphs = self.split_into_paragraphs(text_before)
-
-                for para in paragraphs:
-                    if not para.strip():
-                        continue
-
-                    # 生成段落标记
-                    para_id = f"DOC-{doc_short_id}-PARA-{para_counter}"
-                    labeled_para = f"[{para_id}]\n{para}"
-
-                    # 保存到映射表
-                    references_map[para_id] = para
-
-                    # 添加到content
-                    content.append({"text": labeled_para})
-
-                    para_counter += 1
+                content.append({"text": text_before})
 
             # 处理图片
             # 查找对应的本地图片路径
@@ -192,15 +174,14 @@ class DocumentProcessor:
                     break
 
             if matching_path:
-                # 生成图片标记
+                # 保存图片文件名到映射表
                 img_id = f"DOC-{doc_short_id}-IMAGE-{img_counter}"
-                img_label = f"[{img_id}: {img_filename}]"
-
-                # 保存到映射表（存储文件名，供前端访问）
                 references_map[img_id] = img_filename
 
-                # 添加标记文本
-                content.append({"text": img_label})
+                # 在图片前添加文件名标签（让大模型知道图片的准确文件名）
+                content.append({
+                    "text": f"[图片: {img_filename}]"
+                })
 
                 # 添加图片
                 try:
@@ -252,27 +233,14 @@ class DocumentProcessor:
             # 更新位置（跳过图片引用的markdown语法）
             last_pos = pos + len(f"![]({img_ref})")
 
-        # 处理最后剩余的文本
+        # 处理最后剩余的文本（不分段）
         text_after = markdown_text[last_pos:].strip()
         if text_after:
-            paragraphs = self.split_into_paragraphs(text_after)
-
-            for para in paragraphs:
-                if not para.strip():
-                    continue
-
-                para_id = f"DOC-{doc_short_id}-PARA-{para_counter}"
-                labeled_para = f"[{para_id}]\n{para}"
-
-                references_map[para_id] = para
-                content.append({"text": labeled_para})
-
-                para_counter += 1
+            content.append({"text": text_after})
 
         logger.info(
             "content_built",
             doc_short_id=doc_short_id,
-            paragraphs=para_counter - 1,
             images=img_counter - 1,
             content_blocks=len(content)
         )
