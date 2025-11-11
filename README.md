@@ -132,7 +132,7 @@ ask-prd/
 #### 1. 克隆项目
 
 ```bash
-git clone https://github.com/your-org/ask-prd.git
+git clone https://github.com/zhangzhao2010/ask-prd.git
 cd ask-prd
 ```
 
@@ -369,7 +369,7 @@ sudo apt install python3.11 python3-pip nodejs npm nginx
 
 # 4. 部署应用
 cd /opt
-git clone https://github.com/your-org/ask-prd.git
+git clone https://github.com/zhangzhao2010/ask-prd.git
 cd ask-prd
 
 # 后端
@@ -467,9 +467,8 @@ sudo systemctl restart nginx
 
 ## 联系方式
 
-- 项目主页：https://github.com/your-org/ask-prd
-- 问题反馈：https://github.com/your-org/ask-prd/issues
-- 文档：https://docs.your-org.com/ask-prd
+- 项目主页：https://github.com/zhangzhao2010/ask-prd
+- 问题反馈：https://github.com/zhangzhao2010/ask-prd/issues
 
 ---
 

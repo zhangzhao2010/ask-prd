@@ -156,7 +156,7 @@ export default function RootLayout({
     {
       type: 'button',
       text: '文档',
-      href: 'https://github.com/yourusername/ask-prd',
+      href: 'https://github.com/zhangzhao2010/ask-prd',
       external: true,
       externalIconAriaLabel: '打开新窗口',
     },

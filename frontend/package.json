@@ -2,6 +2,10 @@
   "name": "ask-prd-frontend",
   "version": "0.1.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhangzhao2010/ask-prd.git"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
