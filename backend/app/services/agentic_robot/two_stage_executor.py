@@ -116,7 +116,7 @@ STAGE2_PROMPT_TEMPLATE = """我已经让{doc_count}个助手分别阅读了相�
 **输出格式**
 ```
 ## 回答
-{整合所有文档的相关信息，给出完整的答案}
+{{整合所有文档的相关信息，给出完整的答案}}
 
 ---
 
@@ -124,7 +124,7 @@ STAGE2_PROMPT_TEMPLATE = """我已经让{doc_count}个助手分别阅读了相�
 
 ### 引用1 - [文档名称] - xxxxxx
 ```
-{引用的内容}
+{{引用的内容}}
 ```
 
 ### 引用5(图片) - [文档名称] - 整体匹配流程图
@@ -248,7 +248,7 @@ class TwoStageExecutor:
                     }
                 }
 
-                # 处理单个文档
+                # 处理单个文档（带心跳机制）
                 try:
                     logger.info(
                         "processing_document_stage1",
@@ -257,28 +257,37 @@ class TwoStageExecutor:
                         total=len(document_ids)
                     )
 
-                    result = await self._process_single_document(query, doc_id)
-                    stage1_results.append(result)
+                    # 使用心跳包装器处理文档
+                    result = None
+                    async for event in self._process_single_document_with_heartbeat(query, doc_id, doc_name, idx, len(document_ids)):
+                        if event["type"] == "result":
+                            result = event["data"]
+                        else:
+                            # 心跳事件，直接yield
+                            yield event
 
-                    logger.info(
-                        "document_stage1_completed",
-                        doc_id=doc_id,
-                        doc_name=result.doc_name,
-                        doc_short_id=result.doc_short_id,
-                        response_length=len(result.response_text),
-                        references_count=len(result.references_map),
-                        response_preview=result.response_text[:1000]  # 打印前1000字符
-                    )
+                    if result:
+                        stage1_results.append(result)
 
-                    # 详细打印Stage 1的返回内容（用于debug）
-                    logger.debug(
-                        "stage1_response_full",
-                        doc_id=doc_id,
-                        doc_name=result.doc_name,
-                        doc_short_id=result.doc_short_id,
-                        response_text=result.response_text,  # 完整内容
-                        references_map=result.references_map  # 完整引用映射
-                    )
+                        logger.info(
+                            "document_stage1_completed",
+                            doc_id=doc_id,
+                            doc_name=result.doc_name,
+                            doc_short_id=result.doc_short_id,
+                            response_length=len(result.response_text),
+                            references_count=len(result.references_map),
+                            response_preview=result.response_text[:1000]  # 打印前1000字符
+                        )
+
+                        # 详细打印Stage 1的返回内容（用于debug）
+                        logger.debug(
+                            "stage1_response_full",
+                            doc_id=doc_id,
+                            doc_name=result.doc_name,
+                            doc_short_id=result.doc_short_id,
+                            response_text=result.response_text,  # 完整内容
+                            references_map=result.references_map  # 完整引用映射
+                        )
 
                 except Exception as e:
                     logger.error(
@@ -318,30 +327,61 @@ class TwoStageExecutor:
                 "message": "正在生成综合答案..."
             }
 
-            # 调用Bedrock获取完整Markdown响应（非流式）
-            markdown_response = await self._stage2_synthesize_sync(query, stage1_results)
+            # 【重要】使用流式API收集Bedrock响应（内部），但不实时推送给前端
+            # 原因：
+            # 1. 避免Bedrock同步API超时（300秒限制）
+            # 2. 需要等待完整响应后进行后处理（表格格式化、图片路径转换）
+            # 3. 在等待期间发送心跳防止SSE连接超时
+            import asyncio
+
+            markdown_response = ""
+            last_heartbeat_time = asyncio.get_event_loop().time()
+            heartbeat_interval = 10.0  # 10秒心跳间隔
+            heartbeat_count = 0
+
+            # 使用流式API逐块收集响应
+            async for text_chunk in self._stage2_synthesize_stream(query, stage1_results):
+                markdown_response += text_chunk
+
+                # 检查是否需要发送心跳（每10秒）
+                current_time = asyncio.get_event_loop().time()
+                if current_time - last_heartbeat_time >= heartbeat_interval:
+                    heartbeat_count += 1
+                    yield {
+                        "type": "heartbeat",
+                        "message": f"正在生成答案中，已接收 {len(markdown_response)} 字符... ({heartbeat_count})"
+                    }
+                    last_heartbeat_time = current_time
 
             logger.info(
-                "stage2_markdown_received",
+                "stage2_markdown_collected",
                 response_length=len(markdown_response),
                 response_preview=markdown_response[:500]
             )
 
-            # 修复表格格式（确保表格每行单独占一行）
-            markdown_response = self._fix_table_format(markdown_response)
+            # Bedrock响应收集完成，发送状态更新
+            yield {
+                "type": "status",
+                "message": "正在处理答案（表格格式化、图片���径转换）..."
+            }
 
-            # 转换图片路径为完整的API路径
-            markdown_response = self._convert_image_paths(markdown_response, stage1_results)
+            # 进行后处理
+            # 1. 修复表格格式（确保表格每行单独占一行）
+            processed_markdown = self._fix_table_format(markdown_response)
+
+            # 2. 转换图片路径为完整的API路径
+            processed_markdown = self._convert_image_paths(processed_markdown, stage1_results)
 
             logger.info(
                 "markdown_post_processing_completed",
-                response_length=len(markdown_response)
+                original_length=len(markdown_response),
+                processed_length=len(processed_markdown)
             )
 
-            # 一次性返回完整答案（不再流式输出）
+            # 一次性返回完���的处理后答案
             yield {
                 "type": "answer_delta",
-                "data": {"text": markdown_response}
+                "data": {"text": processed_markdown}
             }
 
             logger.info(
@@ -375,6 +415,94 @@ class TwoStageExecutor:
                 "type": "error",
                 "data": {"message": str(e)}
             }
+
+    async def _process_single_document_with_heartbeat(
+        self,
+        query: str,
+        document_id: str,
+        doc_name: str,
+        current_idx: int,
+        total_docs: int
+    ):
+        """
+        处理单个文档并发送心跳（Stage 1）
+
+        在等待Bedrock响应期间每10秒发送一次心跳，防止SSE连接超时
+
+        Args:
+            query: 用户问题
+            document_id: 文档ID
+            doc_name: 文档名称
+            current_idx: 当前文档索引
+            total_docs: 总文档数
+
+        Yields:
+            心跳事件或结果事件
+        """
+        import asyncio
+        from asyncio import Queue
+
+        # 创建事件队列
+        event_queue: Queue = Queue()
+        stop_heartbeat = asyncio.Event()
+
+        # 心跳任务
+        async def heartbeat_task():
+            heartbeat_count = 0
+            while not stop_heartbeat.is_set():
+                try:
+                    await asyncio.wait_for(stop_heartbeat.wait(), timeout=10.0)
+                    break
+                except asyncio.TimeoutError:
+                    # 10秒超时，发送心跳
+                    heartbeat_count += 1
+                    await event_queue.put({
+                        "type": "heartbeat",
+                        "message": f"正在分析文档 {current_idx}/{total_docs}: {doc_name}... ({heartbeat_count})"
+                    })
+
+        # 文档处理任务
+        async def process_task():
+            try:
+                result = await self._process_single_document(query, document_id)
+                await event_queue.put({
+                    "type": "result",
+                    "data": result
+                })
+            except Exception as e:
+                logger.error(
+                    "process_single_document_failed",
+                    document_id=document_id,
+                    error=str(e),
+                    exc_info=True
+                )
+                await event_queue.put({
+                    "type": "result",
+                    "data": None
+                })
+            finally:
+                stop_heartbeat.set()
+                await event_queue.put(None)  # 结束信号
+
+        # 并发运行
+        heartbeat_handle = asyncio.create_task(heartbeat_task())
+        process_handle = asyncio.create_task(process_task())
+
+        # 从队列中读取事件并yield
+        while True:
+            event = await event_queue.get()
+            if event is None:
+                break
+            yield event
+
+        # 清理任务
+        stop_heartbeat.set()
+        try:
+            await asyncio.wait_for(heartbeat_handle, timeout=1.0)
+        except asyncio.TimeoutError:
+            heartbeat_handle.cancel()
+
+        await process_handle
 
     async def _process_single_document(
         self,
@@ -569,6 +697,107 @@ class TwoStageExecutor:
         except Exception as e:
             logger.error(
                 "bedrock_converse_api_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
+            raise
+
+    async def _stage2_synthesize_stream(
+        self,
+        query: str,
+        stage1_results: List[Stage1Result]
+    ):
+        """
+        Stage 2: 综合所有文档的理解结果，生成Markdown格式答案（流式）
+
+        Args:
+            query: 用户问题
+            stage1_results: Stage 1的所有结果
+
+        Yields:
+            生成的文本片段
+        """
+        from app.core.config import settings
+        import asyncio
+
+        # 1. 构建Stage 2 Prompt
+        prompt = self._build_stage2_prompt(query, stage1_results)
+
+        # 2. 调用Bedrock流式API
+        messages = [
+            {
+                "role": "user",
+                "content": [{"text": prompt}]
+            }
+        ]
+
+        try:
+            # 使用流式API
+            bedrock_runtime = self.bedrock_client.boto_session.client('bedrock-runtime')
+
+            logger.info(
+                "calling_bedrock_converse_stream_api",
+                model_id=settings.generation_model_id,
+                max_tokens=8000,
+                temperature=0.7,
+                messages_count=len(messages)
+            )
+
+            # 在后台线程中调用同步API
+            def sync_stream():
+                response = bedrock_runtime.converse_stream(
+                    modelId=settings.generation_model_id,
+                    messages=messages,
+                    inferenceConfig={
+                        "maxTokens": 8000,
+                        "temperature": 0.7
+                    }
+                )
+                return response['stream']
+
+            # 异步执行同步调用
+            stream = await asyncio.to_thread(sync_stream)
+
+            # 处理流式响应（在后台线程中迭代）
+            full_text = ""
+
+            def read_next_event(stream_iter):
+                """从stream中读取下一个event（同步操作）"""
+                try:
+                    return next(stream_iter)
+                except StopIteration:
+                    return None
+
+            stream_iter = iter(stream)
+
+            while True:
+                # 异步读取下一个event
+                event = await asyncio.to_thread(read_next_event, stream_iter)
+
+                if event is None:
+                    break  # 流结束
+
+                if 'contentBlockDelta' in event:
+                    delta = event['contentBlockDelta']['delta']
+                    if 'text' in delta:
+                        text_chunk = delta['text']
+                        full_text += text_chunk
+                        yield text_chunk
+                elif 'metadata' in event:
+                    # 流结束，记录统计信息
+                    metadata = event['metadata']
+                    usage = metadata.get('usage', {})
+                    logger.info(
+                        "bedrock_converse_stream_completed",
+                        input_tokens=usage.get('inputTokens', 0),
+                        output_tokens=usage.get('outputTokens', 0),
+                        total_length=len(full_text)
+                    )
+
+        except Exception as e:
+            logger.error(
+                "bedrock_converse_stream_failed",
                 error=str(e),
                 error_type=type(e).__name__,
                 exc_info=True

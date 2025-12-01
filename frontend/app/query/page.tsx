@@ -16,8 +16,75 @@ import {
   ColumnLayout,
 } from '@cloudscape-design/components';
 import ReactMarkdown from 'react-markdown';
+import { authService } from '@/services/auth';
 import { knowledgeBaseAPI, queryAPI } from '@/services/api';
 import type { KnowledgeBase, CitationItem, QueryStreamEvent } from '@/types';
+
+// 自定义图片渲染组件，支持带Token的请求
+function AuthenticatedImage({ src, alt }: { src?: string; alt?: string }) {
+  const [imageSrc, setImageSrc] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!src) return;
+
+    // 如果是外部链接，直接使用
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      setImageSrc(src);
+      setLoading(false);
+      return;
+    }
+
+    // 如果是内部API链接，带Token请求
+    const fetchImage = async () => {
+      try {
+        const token = authService.getToken();
+        const response = await fetch(src, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to load image');
+        }
+
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        setImageSrc(objectUrl);
+        setLoading(false);
+      } catch (err) {
+        console.error('Failed to load image:', err);
+        setError(true);
+        setLoading(false);
+      }
+    };
+
+    fetchImage();
+
+    // 清理object URL
+    return () => {
+      if (imageSrc && imageSrc.startsWith('blob:')) {
+        URL.revokeObjectURL(imageSrc);
+      }
+    };
+  }, [src]);
+
+  if (loading) {
+    return <Spinner size="normal" />;
+  }
+
+  if (error) {
+    return <Box color="text-status-error">图片加载失败</Box>;
+  }
+
+  return (
+    <img
+      src={imageSrc}
+      alt={alt || '图片'}
+      style={{ maxWidth: '100%', height: 'auto', borderRadius: '4px' }}
+    />
+  );
+}
 
 function QueryPageContent() {
   const searchParams = useSearchParams();
@@ -127,6 +194,9 @@ function QueryPageContent() {
               // 处理不同类型的事件
               if (data.type === 'status') {
                 setStatus((data as any).message);
+              } else if (data.type === 'heartbeat') {
+                // 心跳事件，更新状态（保持连接活跃）
+                setStatus((data as any).message || '正在生成中...');
               } else if (data.type === 'chunk') {
                 // Multi-Agent系统的事件类型：chunk，字段名是 content
                 setAnswer((prev) => prev + (data as any).content);
@@ -138,6 +208,14 @@ function QueryPageContent() {
                 // Two-Stage系统的事件类型：answer_delta，字段在 data.text
                 const textChunk = (data as any).data?.text || '';
                 setAnswer((prev) => prev + textChunk);
+                // 自动滚动到底部
+                setTimeout(() => {
+                  answerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                }, 0);
+              } else if (data.type === 'answer_complete') {
+                // 答案生成完成，包含后处理后的完整markdown（图片路径已转换）
+                const completeText = (data as any).data?.text || '';
+                setAnswer(completeText);
                 // 自动滚动到底部
                 setTimeout(() => {
                   answerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -289,7 +367,13 @@ function QueryPageContent() {
           header={<Header variant="h2">答案</Header>}
         >
           <div ref={answerRef} className="markdown-content">
-            <ReactMarkdown>
+            <ReactMarkdown
+              components={{
+                img: ({ node, ...props }) => (
+                  <AuthenticatedImage src={props.src} alt={props.alt} />
+                ),
+              }}
+            >
               {processedAnswer || answer}
             </ReactMarkdown>
           </div>
@@ -335,7 +419,13 @@ function QueryPageContent() {
                         padding: '8px',
                         borderRadius: '4px',
                       }}>
-                        <ReactMarkdown>
+                        <ReactMarkdown
+                          components={{
+                            img: ({ node, ...props }) => (
+                              <AuthenticatedImage src={props.src} alt={props.alt} />
+                            ),
+                          }}
+                        >
                           {citation.content}
                         </ReactMarkdown>
                       </div>
@@ -344,14 +434,9 @@ function QueryPageContent() {
 
                   {citation.chunk_type === 'image' && citation.image_url && (
                     <Box>
-                      <img
+                      <AuthenticatedImage
                         src={citation.image_url}
                         alt={citation.content || '图片'}
-                        style={{
-                          maxWidth: '100%',
-                          height: 'auto',
-                          borderRadius: '4px',
-                        }}
                       />
                       {citation.content && (
                         <Box

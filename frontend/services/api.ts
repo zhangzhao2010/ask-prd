@@ -76,14 +76,24 @@ class ApiClient {
     data?: unknown,
     options?: RequestOptions
   ): Promise<T> {
+    // 如果data是FormData，不设置Content-Type（让浏览器自动设置）
+    // 并且不使用JSON.stringify
+    const isFormData = data instanceof FormData;
+
     return this.request<T>(url, {
       ...options,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
-      body: data ? JSON.stringify(data) : undefined,
+      headers: isFormData
+        ? options?.headers  // FormData: 不设置Content-Type
+        : {
+            'Content-Type': 'application/json',
+            ...options?.headers,
+          },
+      body: isFormData
+        ? data  // FormData: 直接传递
+        : data
+        ? JSON.stringify(data)  // 其他: JSON序列化
+        : undefined,
     });
   }
 
@@ -255,10 +265,9 @@ export const documentAPI = {
   async upload(kbId: string, file: File) {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('kb_id', kbId);
-    return apiClient.post('/documents/upload', formData, {
-      headers: {}, // 让浏览器自动设置Content-Type: multipart/form-data
-    });
+    // kb_id 作为 query 参数传递，而不是在 FormData 中
+    // apiClient.post 会自动识别 FormData 并正确处理
+    return apiClient.post(`/documents?kb_id=${kbId}`, formData);
   },
   async delete(id: string) {
     return apiClient.delete(`/documents/${id}`);
@@ -280,5 +289,42 @@ export const syncTaskAPI = {
   },
   async cancel(id: string) {
     return apiClient.post(`/sync-tasks/${id}/cancel`);
+  },
+};
+
+export const queryAPI = {
+  /**
+   * 流式查询接口（SSE）
+   * 返回 ReadableStream 用于处理服务器推送事件
+   */
+  async stream(kbId: string, queryText: string): Promise<ReadableStream<Uint8Array>> {
+    const token = authService.getToken();
+    if (!token) {
+      throw new Error('未登录，请先登录');
+    }
+
+    // 构建查询参数
+    const params = new URLSearchParams();
+    params.append('kb_id', kbId);
+    params.append('query', queryText);
+
+    // 发起流式请求
+    const response = await fetch(`/api/v1/query/stream?${params}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: '查询失败' }));
+      throw new Error(error.detail || `查询失败: ${response.status}`);
+    }
+
+    if (!response.body) {
+      throw new Error('响应没有body');
+    }
+
+    return response.body;
   },
 };
