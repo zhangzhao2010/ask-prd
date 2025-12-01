@@ -71,19 +71,11 @@ class KnowledgeBaseService:
             # 3. 创建OpenSearch索引
             opensearch_client.create_index(index_name, embedding_dimension=1024)
 
-            # 4. 创建本地存储目录
-            import os
-            from app.core.config import settings
-
-            local_storage_path = os.path.join(settings.data_dir, "knowledge_bases", kb_id)
-            os.makedirs(local_storage_path, exist_ok=True)
-
-            # 5. 创建数据库记录
+            # 4. 创建数据库记录
             kb = KnowledgeBase(
                 id=kb_id,
                 name=kb_data.name,
                 description=kb_data.description,
-                local_storage_path=local_storage_path,
                 opensearch_index_name=index_name,
                 status="active",
                 owner_id=owner_id,

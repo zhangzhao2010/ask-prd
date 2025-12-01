@@ -47,7 +47,6 @@ class KnowledgeBase(Base):
     id = Column(String, primary_key=True)  # UUID格式
     name = Column(String, nullable=False, unique=True)
     description = Column(Text)
-    local_storage_path = Column(String)  # 本地存储路径，例如: data/knowledge_bases/{kb_id}/
     opensearch_collection_id = Column(String)
     opensearch_index_name = Column(String)
     status = Column(String, nullable=False, default="active")  # active | deleted

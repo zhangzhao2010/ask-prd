@@ -57,7 +57,6 @@ class KnowledgeBaseResponse(BaseResponse):
     id: str
     name: str
     description: Optional[str]
-    local_storage_path: Optional[str]
     opensearch_collection_id: Optional[str]
     opensearch_index_name: Optional[str]
     status: str
