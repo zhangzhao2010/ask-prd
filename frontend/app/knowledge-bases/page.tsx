@@ -23,7 +23,6 @@ interface KnowledgeBase {
   name: string;
   description?: string;
   status: string;
-  local_storage_path?: string;
   opensearch_index_name?: string;
   visibility: 'private' | 'public' | 'shared';
   owner_id: number;

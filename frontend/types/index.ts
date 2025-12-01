@@ -34,7 +34,6 @@ export interface KnowledgeBase {
   id: string;
   name: string;
   description?: string;
-  local_storage_path?: string;
   opensearch_collection_id?: string;
   opensearch_index_name?: string;
   status: string;
