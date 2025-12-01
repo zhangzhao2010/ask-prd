@@ -7,7 +7,7 @@
 ## 技术栈
 
 - **框架**: FastAPI 0.121.0
-- **AI框架**: Strands Agents 1.14.0
+- **AI实现**: 原生Bedrock API (boto3)
 - **数据库**: SQLite (WAL模式)
 - **AWS服务**:
   - Bedrock (Claude Sonnet 4.5)
@@ -77,7 +77,7 @@
 - [x] 文档删除（单个/批量）
 
 #### 2.3 Bedrock客户端 (`app/utils/bedrock_client.py`)
-- [x] Strands BedrockModel集成
+- [x] Bedrock客户端（Embedding生成）
 - [x] 生成模型配置（Claude Sonnet 4.5）
 - [x] Embedding生成（Titan Embeddings V2）
 - [x] 批量Embedding生成
@@ -206,74 +206,81 @@
 - [x] DELETE /sync-tasks/{task_id} - 取消任务
 - [x] 支持full_sync和incremental任务类型
 
-### ✅ Phase 8: Agent实现 (已完成)
+### ✅ Phase 8: Two-Stage问答实现 (已完成)
 
-#### 8.1 Agent工具 (`app/agents/tools/document_tools.py`)
-- [x] create_document_reader_tool() - 文档内容读取工具
-- [x] create_image_reader_tool() - 图片信息读取工具
-- [x] create_search_context_tool() - 检索上下文工具
-- [x] 使用Strands @tool装饰器定义工具
+#### 8.1 TwoStageExecutor (`app/services/agentic_robot/two_stage_executor.py`)
+- [x] execute_streaming() - Two-Stage执行主流程（流式）
+- [x] Stage 1 - 文档理解：
+  - _process_single_document() - 串行处理每个文档
+  - _process_single_document_with_heartbeat() - 带心跳的文档处理
+  - _call_bedrock_stage1() - 调用Bedrock Converse API
+  - _invoke_bedrock_sync() - 同步Bedrock调用（支持多模态）
+- [x] Stage 2 - 答案综合：
+  - _stage2_synthesize_stream() - 流式生成综合答案
+  - _stage2_synthesize_sync() - 同步生成答案（备用）
+  - _build_stage2_prompt() - 构建Stage 2提示词
+- [x] 后处理功能：
+  - _fix_table_format() - 修复Markdown表格格式
+  - _convert_image_paths() - 转换图片路径为API URL
+  - _extract_references_from_markdown() - 从Markdown提取引用
+- [x] 心跳机制（防止SSE超时）
+- [x] 错误处理和重试
+- [x] Prompt模板（Stage 1 + Stage 2）
 
-#### 8.2 Sub-Agent (`app/agents/sub_agent.py`)
-- [x] create_sub_agent() - 创建Sub-Agent实例
-- [x] invoke_sub_agent() - 调用Sub-Agent（异步）
-- [x] 使用Strands Agent框架
-- [x] 集成文档读取和图片分析工具
-- [x] BedrockModel配置（Claude Sonnet 4.5）
-- [x] 结构化输出（answer, has_relevant_info, confidence）
-- [x] 深度文档阅读和理解
+#### 8.2 DocumentLoader (`app/services/document_loader.py`)
+- [x] load_document() - 加载完整文档内容
+- [x] _ensure_local_markdown() - 确保Markdown本地缓存
+- [x] _ensure_local_images() - 确保图片本地缓存
+- [x] _download_from_s3() - 从S3下载文件
+- [x] S3优先 + 本地缓存策略
 
-#### 8.3 Main-Agent (`app/agents/main_agent.py`)
-- [x] create_main_agent() - 创建Main-Agent实例
-- [x] invoke_main_agent() - 非流式调用
-- [x] invoke_main_agent_stream() - 流式调用（SSE）
-- [x] 多文档结果综合
-- [x] 识别共同点和差异
-- [x] 时间顺序组织演进历史
-- [x] 标注引用来源
-- [x] Token统计自动收集
+#### 8.3 DocumentProcessor (`app/services/document_processor.py`)
+- [x] process() - 处理文档为多模态content
+- [x] _parse_markdown() - 解析Markdown分段
+- [x] _extract_images_from_markdown() - 提取图片引用
+- [x] _build_content_blocks() - 构建文本+图片混合content
+- [x] _load_image_bytes() - 加载图片字节数据
+- [x] 支持Bedrock Converse API的多模态格式
 
 ### ✅ Phase 9: 查询/搜索API (已完成)
 
 #### 9.1 Query Service (`app/services/query_service.py`)
-- [x] execute_query_stream() - 流式查询主流程
+- [x] execute_query_two_stage() - Two-Stage查询主流程（实际使用）
 - [x] _hybrid_search() - 混合检索（向量 + BM25 + RRF）
 - [x] _group_chunks_by_document() - 按文档聚合chunks
-- [x] _invoke_sub_agents() - 并发调用Sub-Agents（Semaphore限流）
-- [x] _process_single_document() - 单文档处理流程
-- [x] _get_document_content() - 获取Markdown内容（本地缓存优先）
-- [x] _get_document_images() - 获取图片信息
-- [x] _save_query_history() - 保存查询历史
-- [x] 完整的6步查询流程：
-  1. Query Rewrite（优化查询）
-  2. Hybrid Search（混合检索）
-  3. 文档聚合（按document_id分组）
-  4. Sub-Agents并发执行（深度阅读文档）
-  5. Main-Agent综合（流式输出答案）
-  6. 保存查询历史（Token统计和响应时间）
+- [x] 完整的3步查询流程：
+  1. Hybrid Search（混合检索）
+  2. 提取Document ID列表（限制MAX_DOCUMENTS）
+  3. TwoStageExecutor执行（Stage 1 + Stage 2）
 
 #### 9.2 API路由 (`app/api/v1/query/routes.py`)
 - [x] POST /query/stream - 流式问答接口（SSE）
-- [x] GET /query/history - 查询历史列表（分页）
-- [x] GET /query/history/{query_id} - 查询详情
+- [x] 权限检查（需要知识库读权限）
 - [x] SSE事件类型：
   - status: 状态更新
+  - progress: Stage 1进度（当前文档/总文档数）
+  - heartbeat: 心跳事件（10秒间隔，防止超时）
   - retrieved_documents: 检索到的文档信息
-  - text_delta: 答案文本增量
-  - complete: 完成事件（含Token统计）
+  - answer_delta: 答案文本增量
+  - done: 完成事件
   - error: 错误事件
 
-### 🚧 Phase 10: 测试和优化 (待实现)
+### ✅ Phase 10: 测试和优化 (已完成)
 
-#### 10.1 单元测试
-- [ ] Service层测试
-- [ ] API测试
-- [ ] Agent测试
+#### 10.1 测试脚本
+- [x] test_agents.py - Two-Stage执行器测试
+- [x] test_chunking.py - 分块服务测试
+- [x] test_conversion.py - PDF转换测试
+- [x] test_sync_system.py - 同步系统测试
+- [x] test_query_system.py - 完整查询系统测试
+- [x] test_embedding_performance.py - Embedding性能测试
 
-#### 10.2 集成测试
-- [ ] 端到端流程测试
-- [ ] 性能测试
-- [ ] 压力测试
+#### 10.2 性能优化
+- [x] 本地缓存策略（S3 + 本地）
+- [x] 批量Embedding（batch_size=25）
+- [x] OpenSearch批量索引（bulk API）
+- [x] 心跳机制（防止超时）
+- [x] 串行处理文档（避免内存溢出）
 
 #### 10.3 文档
 - [ ] API文档（OpenAPI）
@@ -312,16 +319,14 @@ backend/
 │   │   ├── s3_client.py             ✅ S3工具
 │   │   ├── opensearch_client.py     ✅ OpenSearch工具
 │   │   └── bedrock_client.py        ✅ Bedrock工具
-│   ├── agents/                       ✅ Agent实现
-│   │   ├── tools/
-│   │   │   └── document_tools.py     ✅ 文档读取工具
-│   │   ├── sub_agent.py              ✅ Sub-Agent实现
-│   │   └── main_agent.py             ✅ Main-Agent实现
+│   ├── services/agentic_robot/       ✅ Two-Stage执行器
+│   │   ├── __init__.py
+│   │   └── two_stage_executor.py     ✅ Stage 1 + Stage 2实现
 │   ├── workers/                      ✅ 后台任务
 │   │   └── sync_worker.py            ✅ 同步Worker
 │   └── main.py                       ✅ FastAPI应用
 ├── data/
-│   └── aks-prd.db                    ✅ SQLite数据库
+│   └── ask-prd.db                    ✅ SQLite数据库
 ├── requirements.txt                  ✅ 依赖列表
 ├── .env                              ✅ 环境配置
 └── DEVELOPMENT.md                    ✅ 本文档
@@ -337,7 +342,7 @@ backend/
 5. **PDF转换服务** - Marker集成、图片提取、Bedrock Vision分析 ✅
 6. **文本处理服务** - 智能分块、批量向量化、OpenSearch索引 ✅
 7. **同步任务系统** - 完整的端到端异步处理流程 ✅
-8. **Multi-Agent系统** - Sub-Agent和Main-Agent实现（Strands框架） ✅
+8. **Two-Stage问答系统** - Stage 1文档理解 + Stage 2答案综合（原生Bedrock API） ✅
 9. **智能问答API** - 流式问答、混合检索、查询历史 ✅
 
 ### 核心完成度

@@ -419,7 +419,7 @@ JWT_ALGORITHM=HS256
 JWT_ACCESS_TOKEN_EXPIRE_DAYS=7
 
 # 数据库配置
-DATABASE_PATH=./data/aks-prd.db
+DATABASE_PATH=./data/ask-prd.db
 
 # API配置
 API_HOST=0.0.0.0

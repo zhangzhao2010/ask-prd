@@ -10,7 +10,7 @@ ASK-PRD 是一个基于PRD文档的智能检索问答系统（Demo项目），�
 
 **技术栈核心**：
 - 后端：Python 3.12 + FastAPI + SQLAlchemy + SQLite
-- Agent框架：Strands Agents SDK 1.14.0（用于Multi-Agent实现）
+- Agent框架：Strands Agents SDK (>=0.1.0)（用于Multi-Agent实现）
 - 前端：Next.js 15.1.4 + AWS Cloudscape Design System + TypeScript + React 19
 - AI服务：AWS Bedrock
   - Region: us-west-2（已配置所需权限）
@@ -19,6 +19,7 @@ ASK-PRD 是一个基于PRD文档的智能检索问答系统（Demo项目），�
   - 通过Strands BedrockModel集成
 - 向量数据库：Amazon OpenSearch Serverless
 - PDF转换：marker 1.10.0+（需要GPU支持）
+- 认证：JWT (python-jose + passlib + bcrypt)
 
 ## 系统架构要点
 
@@ -30,17 +31,20 @@ ASK-PRD 是一个基于PRD文档的智能检索问答系统（Demo项目），�
    - 文本和图片都作为独立的chunk向量化
    - 数据存储：SQLite（元数据）+ S3（文件）+ OpenSearch（向量）
 
-2. **Agentic Robot（智能问答 - 基于Strands Agents）**
-   - Query Rewrite：使用Strands Agent将用户问题重写为多个检索查询
+2. **Agentic Robot（智能问答 - Two-Stage架构）**
    - Hybrid Search：向量检索（kNN）+ BM25关键词检索，使用RRF合并
-   - Multi-Agent协作（使用Strands框架实现）：
-     - Sub-Agent：每个Strands Agent实例负责深度阅读一个完整文档（Markdown+图片）
-       - 使用`@tool`装饰器定义文档读取工具
-       - 使用`structured_output`确保输出格式
-       - 支持多模态输入（文本+图片）
-     - Main Agent：另一个Strands Agent实例，综合所有Sub-Agent的结果生成最终答案
-       - 使用BedrockModel的流式API
-   - 自定义Orchestration：使用asyncio并发执行Sub-Agents，通过Semaphore限制并发数
+   - Two-Stage执行流程（使用原生Bedrock API实现）：
+     - Stage 1：串行处理每个文档，深度阅读完整内容（Markdown+图片）
+       - 使用Bedrock Converse API进行多模态输入
+       - 每个文档生成独立的理解结果
+       - 支持文本和图片的混合输入
+     - Stage 2：综合所有文档的理解结果，生成最终答案
+       - 使用Bedrock Converse Stream API流式输出
+       - Markdown格式的结构化答案
+   - 自定义Orchestration：手动实现异步流程控制
+     - asyncio管理并发任务
+     - 心跳机制防止超时（10秒间隔）
+     - Semaphore限制并发数（避免API限流）
    - 流式输出：通过SSE推送答案和引用
 
 ### 关键设计决策
@@ -61,91 +65,123 @@ ASK-PRD 是一个基于PRD文档的智能检索问答系统（Demo项目），�
      - 支持将来多实例部署（共享S3数据）
      - 灾难恢复能力
 
-## Strands Agents框架使用要点
+## Bedrock API使用要点
 
-### 核心组件
+### 核心实现
 
-1. **BedrockModel集成**
+本项目**不使用Strands Agent框架**，而是直接使用**原生AWS Bedrock API**实现Multi-Agent模式。
+
+1. **Bedrock客户端初始化**
    ```python
-   from strands.models import BedrockModel
+   import boto3
 
-   model = BedrockModel(
-       model_id="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
-       region_name="us-west-2",
-       temperature=0.3,
-       streaming=True,
-       max_tokens=4096
+   # 使用boto3直接调用Bedrock
+   bedrock_runtime = boto3.Session().client(
+       'bedrock-runtime',
+       region_name='us-west-2'
    )
    ```
 
-2. **Agent创建和使用**
+2. **Converse API（同步调用）**
    ```python
-   from strands import Agent, tool
+   # 用于Stage 1的文档理解
+   response = bedrock_runtime.converse(
+       modelId="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+       messages=[{
+           "role": "user",
+           "content": [
+               {"text": "提示词文本"},
+               {"image": {"format": "png", "source": {"bytes": image_bytes}}}
+           ]
+       }],
+       inferenceConfig={
+           "maxTokens": 8000,
+           "temperature": 0.3
+       }
+   )
+   text = response['output']['message']['content'][0]['text']
+   ```
 
-   @tool
-   def your_tool(param: str) -> str:
-       """工具描述"""
-       return "result"
-
-   agent = Agent(
-       model=model,
-       tools=[your_tool],
-       system_prompt="系统提示词"
+3. **Converse Stream API（流式调用）**
+   ```python
+   # 用于Stage 2的答案生成
+   response = bedrock_runtime.converse_stream(
+       modelId="global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+       messages=[...],
+       inferenceConfig={...}
    )
 
-   # 同步调用
-   result = agent("用户输入")
-
-   # 流式调用
-   async for event in agent.stream_async("用户输入"):
-       if event.type == "text_delta":
-           print(event.data)
-
-   # 结构化输出
-   from pydantic import BaseModel
-   class Output(BaseModel):
-       answer: str
-
-   result = agent.structured_output(Output, "用户输入")
+   for event in response['stream']:
+       if 'contentBlockDelta' in event:
+           text_chunk = event['contentBlockDelta']['delta']['text']
+           yield text_chunk
    ```
 
-3. **Multi-Agent Orchestration**
-   - 使用asyncio并发执行多个Agent实例
-   - 通过Semaphore控制并发数（避免Bedrock限流）
-   - 每个Sub-Agent是独立的Strands Agent实例
-   - Main-Agent综合所有结果
-
-4. **Metrics收集**
+4. **Two-Stage Orchestration（手动实现）**
    ```python
-   result = agent("query")
-   metrics = result.metrics.accumulated_usage
-   # 包含：inputTokens, outputTokens, totalTokens
-   # 如果启用caching：cacheReadInputTokens, cacheWriteInputTokens
+   # Stage 1: 串行处理每个文档
+   stage1_results = []
+   for doc_id in document_ids:
+       result = await process_single_document(doc_id)
+       stage1_results.append(result)
+
+   # Stage 2: 综合答案（流式）
+   async for chunk in synthesize_answer(stage1_results):
+       yield chunk
    ```
 
-### Strands框架文档
+5. **心跳机制（防止SSE超时）**
+   ```python
+   import asyncio
 
-项目使用Strands Agents SDK的MCP工具可以查询文档：
-- `mcp__strands__search_docs`：搜索文档
-- `mcp__strands__fetch_doc`：获取完整文档内容
+   # 每10秒发送心跳
+   async def heartbeat_task():
+       while not stop_event.is_set():
+           await asyncio.sleep(10.0)
+           yield {"type": "heartbeat", "message": "处理中..."}
+   ```
 
-常用查询：
-- "agent basic usage"
-- "bedrock model configuration"
-- "python tools define"
-- "multi-agent patterns"
-- "streaming output"
+## 快速开始（完整流程）
+
+```bash
+# 1. 克隆项目（如果是新环境）
+git clone <your-repo-url>
+cd ask-prd
+
+# 2. 后端环境准备
+cd backend
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+# 3. 配置环境变量（复制.env文件并修改）
+# 必须配置：S3_BUCKET, OPENSEARCH_ENDPOINT
+# 可选配置：JWT_SECRET_KEY（生产环境必须修改）
+cp .env.example .env  # 如果有example文件
+vim .env  # 或用其他编辑器修改
+
+# 4. 数据库初始化
+python scripts/init_db.py
+
+# 5. 启动后端服务
+python -m app.main
+# 访问 http://localhost:8000/docs 查看API文档
+
+# 6. 启动前端（另开终端）
+cd ../frontend
+npm install
+npm run dev
+# 访问 http://localhost:3000
+```
 
 ## 开发命令
 
 ### 后端开发（backend/目录）
 
 ```bash
-# 环境准备
+# 环境准备（已在快速开始中完成）
 cd backend
-python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
 
 # 数据库初始化
 python scripts/init_db.py
@@ -173,7 +209,7 @@ python scripts/test_query_system.py        # 完整查询系统测试
 python scripts/test_embedding_performance.py  # Embedding性能测试
 
 # 单个文档同步测试
-python test_sync_single.py
+python scripts/test_sync_single.py
 
 # 单元测试
 pytest
@@ -187,8 +223,8 @@ mypy app/
 
 # 数据库操作
 # 查看数据库
-sqlite3 data/aks-prd.db ".tables"
-sqlite3 data/aks-prd.db ".schema knowledge_bases"
+sqlite3 data/ask-prd.db ".tables"
+sqlite3 data/ask-prd.db ".schema knowledge_bases"
 
 # 数据库迁移（如果使用alembic）
 alembic revision --autogenerate -m "description"  # 创建迁移
@@ -247,6 +283,8 @@ aws bedrock list-foundation-models --region us-west-2
 backend/
 ├── app/
 │   ├── api/v1/          # API路由
+│   │   ├── auth/             # 用户认证（登录、注册）
+│   │   ├── users/            # 用户管理
 │   │   ├── knowledge_bases/  # 知识库管理
 │   │   ├── documents/        # 文档管理
 │   │   ├── sync_tasks/       # 同步任务
@@ -262,22 +300,18 @@ backend/
 │   │   ├── chunking_service.py      # 文本分块
 │   │   ├── embedding_service.py     # 向量化
 │   │   ├── task_service.py          # 任务管理
-│   │   ├── query_service.py         # 查询服务
+│   │   ├── query_service.py         # 查询服务（混合检索）
 │   │   ├── document_loader.py       # 文档加载
 │   │   ├── document_processor.py    # 文档处理
 │   │   ├── reference_extractor.py   # 引用提取
-│   │   └── agentic_robot/           # Agent系统目录
-│   ├── agents/          # Strands Agent实现
-│   │   ├── tools/
-│   │   │   └── document_tools.py    # 文档读取工具
-│   │   ├── sub_agent.py             # Sub-Agent
-│   │   └── main_agent.py            # Main-Agent
+│   │   └── agentic_robot/           # Two-Stage执行器
+│   │       └── two_stage_executor.py  # Stage 1 + Stage 2实现
 │   ├── workers/         # 后台任务
 │   │   └── sync_worker.py           # 同步Worker（异步处理PDF转换和索引）
 │   ├── utils/           # 工具函数
 │   │   ├── s3_client.py             # S3客户端
 │   │   ├── opensearch_client.py     # OpenSearch客户端
-│   │   └── bedrock_client.py        # Bedrock客户端（Strands集成）
+│   │   └── bedrock_client.py        # Bedrock客户端（Embedding）
 │   ├── core/            # 核心配置
 │   │   ├── config.py                # 配置管理
 │   │   ├── database.py              # 数据库连接
@@ -294,7 +328,7 @@ backend/
 │   └── test_embedding_performance.py # 性能测试
 ├── tests/               # 单元测试
 ├── data/                # 数据目录
-│   ├── aks-prd.db       # SQLite数据库
+│   ├── ask-prd.db       # SQLite数据库
 │   └── cache/           # 本地文件缓存
 │       ├── documents/   # 文档缓存
 │       └── temp/        # 临时文件
@@ -458,8 +492,7 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 
-# Strands Agent框架
-strands-agents>=0.1.0
+# 注意：不使用Strands Agent框架，仅使用boto3直接调用Bedrock API
 
 # 数据库
 sqlalchemy>=2.0.35
@@ -482,6 +515,11 @@ tiktoken>=0.7.0
 pydantic>=2.9.0
 pydantic-settings>=2.5.0
 
+# 认证和安全
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt==4.1.2  # 锁定4.1.2版本，避免与passlib不兼容
+
 # 日志
 structlog>=24.4.0
 
@@ -502,19 +540,18 @@ mypy>=1.11.0
 ```bash
 # AWS配置
 AWS_REGION=us-west-2
-S3_BUCKET=your-bucket
-S3_PREFIX=aks-prd/
+S3_BUCKET=bedrock-knowledgebase-us-west-2-096331270838  # 替换为你的bucket
 
 # OpenSearch配置
-OPENSEARCH_ENDPOINT=your-opensearch-endpoint
+OPENSEARCH_ENDPOINT=https://your-endpoint.us-west-2.aoss.amazonaws.com  # 替换为你的endpoint
 
-# Bedrock配置（Strands会自动使用这些配置）
+# Bedrock配置
 BEDROCK_REGION=us-west-2
 EMBEDDING_MODEL_ID=amazon.titan-embed-text-v2:0
 GENERATION_MODEL_ID=global.anthropic.claude-sonnet-4-5-20250929-v1:0
 
 # 数据库配置
-DATABASE_PATH=./data/aks-prd.db
+DATABASE_PATH=./data/ask-prd.db
 
 # 缓存配置
 CACHE_DIR=./data/cache
@@ -525,6 +562,14 @@ API_HOST=0.0.0.0
 API_PORT=8000
 DEBUG=true
 LOG_LEVEL=INFO
+
+# Marker配置（PDF转换）
+MARKER_USE_GPU=true
+
+# JWT认证配置
+JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production-min-32-chars
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_DAYS=7
 
 # 注意：当前开发服务器已配置所需的AWS权限，无需手动设置AccessKey
 ```
@@ -568,11 +613,11 @@ LOG_LEVEL=INFO
    - 任务冲突检测
    - 进度跟踪和错误处理
 
-7. **Multi-Agent智能问答**
-   - Sub-Agent（文档深度阅读）
-   - Main-Agent（结果综合）
-   - Strands框架集成
-   - Agent工具系统（@tool装饰器）
+7. **Two-Stage智能问答**
+   - Stage 1：文档深度阅读（串行处理）
+   - Stage 2：答案综合生成（流式输出）
+   - 原生Bedrock API（Converse + Converse Stream）
+   - 手动Orchestration（asyncio + 心跳机制）
    - 并发控制（Semaphore）
 
 8. **智能检索和问答**
@@ -581,7 +626,13 @@ LOG_LEVEL=INFO
    - 查询历史记录
    - Token统计和响应时间追踪
 
-9. **前端界面**
+9. **用户认证和权限管理**
+   - JWT认证（python-jose + passlib）
+   - 用户注册、登录、登出
+   - 密码加密存储（bcrypt）
+   - 基于Token的API访问控制
+
+10. **前端界面**
    - Next.js + AWS Cloudscape Design System
    - 知识库管理界面
    - 文档上传和管理
@@ -621,7 +672,6 @@ LOG_LEVEL=INFO
 1. **Marker依赖GPU**：PDF转换需要GPU支持（推荐NVIDIA T4或更好）
 2. **并发限制**：Sub-Agent并发数限制为5，避免Bedrock限流
 3. **SQLite单机**：当前使用SQLite，不支持多实例部署（可迁移到RDS）
-4. **无认证**：当前版本无用户认证和权限管理
 
 ## 常见问题排查
 
@@ -634,10 +684,10 @@ python --version  # 需要3.12+
 pip list | grep -E "fastapi|strands|boto3"
 
 # 检查数据库
-ls -lh backend/data/aks-prd.db
+ls -lh backend/data/ask-prd.db
 
 # 重新初始化数据库
-rm backend/data/aks-prd.db*
+rm backend/data/ask-prd.db*
 cd backend && python scripts/init_db.py
 ```
 
@@ -665,11 +715,12 @@ curl -X GET "https://$OPENSEARCH_ENDPOINT/_cluster/health"
 
 ## 下一步改进方向（可选）
 
-- [ ] 用户认证和权限管理
-- [ ] 多租户支持
-- [ ] 缓存自动清理（LRU）
-- [ ] 监控和告警
-- [ ] Metrics收集
-- [ ] 单元测试覆盖率提升
-- [ ] 性能压力测试
-- [ ] 迁移到RDS（生产环境）
+- [ ] 多租户支持（知识库隔离）
+- [ ] 缓存自动清理（LRU自动化）
+- [ ] 监控和告警（CloudWatch集成）
+- [ ] Metrics收集和展示
+- [ ] 单元测试覆盖率提升到80%+
+- [ ] 性能压力测试（locust/k6）
+- [ ] 迁移到RDS（生产环境高可用）
+- [ ] API Rate Limiting
+- [ ] 细粒度权限控制（RBAC）

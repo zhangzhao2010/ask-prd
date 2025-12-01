@@ -595,7 +595,7 @@ data/
 ├── cache/                    # 临时缓存（可清理）
 │   ├── conversions/          # Marker转换临时目录
 │   └── temp/
-└── aks-prd.db                # SQLite数据库
+└── ask-prd.db                # SQLite数据库
 ```
 
 ---

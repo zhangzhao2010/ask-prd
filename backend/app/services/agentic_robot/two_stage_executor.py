@@ -2,6 +2,7 @@
 TwoStageExecutor - Two-Stage查询执行器
 负责协调整个查询流程：Stage 1(文档级理解) + Stage 2(综合答案)
 """
+import asyncio
 from typing import List, Dict, AsyncGenerator
 from sqlalchemy.orm import Session
 
@@ -222,52 +223,77 @@ class TwoStageExecutor:
         )
 
         try:
-            # Stage 1: 串行处理每个文档
-            stage1_results = []
+            # Stage 1: 并行处理所有文档（使用Semaphore限流）
+            from app.core.config import settings
 
-            for idx, doc_id in enumerate(document_ids, 1):
-                # 检查文档是否存在且未删除
+            # 记录Stage 1开始时间
+            stage1_start_time = asyncio.get_event_loop().time()
+
+            # 创建事件队列和并发控制
+            event_queue: asyncio.Queue = asyncio.Queue()
+            semaphore = asyncio.Semaphore(settings.stage1_concurrency)
+            stop_heartbeat = asyncio.Event()
+
+            # 统计变量
+            completed_count = 0
+            failed_count = 0
+            total_count = len(document_ids)
+
+            # 预处理：过滤无效文档
+            valid_documents = []
+            for doc_id in document_ids:
                 doc = self.db.query(Document).filter(Document.id == doc_id).first()
-
                 if not doc:
                     logger.warning("document_not_found", doc_id=doc_id)
                     continue
-
                 if doc.status == "deleted":
                     logger.warning("document_deleted_skipping", doc_id=doc_id, filename=doc.filename)
                     continue
+                valid_documents.append((doc_id, doc.filename))
 
-                doc_name = doc.filename
+            total_count = len(valid_documents)
 
-                yield {
-                    "type": "progress",
-                    "data": {
-                        "current": idx,
-                        "total": len(document_ids),
-                        "doc_name": doc_name
-                    }
-                }
+            logger.info(
+                "stage1_parallel_start",
+                total_documents=total_count,
+                concurrency=settings.stage1_concurrency,
+                filtered_out=len(document_ids) - total_count
+            )
 
-                # 处理单个文档（带心跳机制）
-                try:
-                    logger.info(
-                        "processing_document_stage1",
-                        doc_id=doc_id,
-                        index=idx,
-                        total=len(document_ids)
-                    )
+            async def process_with_limit_and_progress(doc_id: str, doc_name: str):
+                """带限流和进度反馈的文档处理"""
+                nonlocal completed_count, failed_count
 
-                    # 使用心跳包装器处理文档
-                    result = None
-                    async for event in self._process_single_document_with_heartbeat(query, doc_id, doc_name, idx, len(document_ids)):
-                        if event["type"] == "result":
-                            result = event["data"]
-                        else:
-                            # 心跳事件，直接yield
-                            yield event
+                async with semaphore:
+                    try:
+                        # 记录单个文档开始时间
+                        doc_start_time = asyncio.get_event_loop().time()
 
-                    if result:
-                        stage1_results.append(result)
+                        logger.info(
+                            "document_processing_start",
+                            doc_id=doc_id,
+                            doc_name=doc_name
+                        )
+
+                        # 带重试的处理
+                        result = await self._process_single_document_with_retry(
+                            query, doc_id
+                        )
+
+                        # 计算单个文档耗时
+                        doc_elapsed = asyncio.get_event_loop().time() - doc_start_time
+
+                        # 成功后更新进度
+                        completed_count += 1
+                        await event_queue.put({
+                            "type": "progress",
+                            "data": {
+                                "completed": completed_count,
+                                "total": total_count,
+                                "doc_name": doc_name,
+                                "status": "completed"
+                            }
+                        })
 
                         logger.info(
                             "document_stage1_completed",
@@ -276,7 +302,8 @@ class TwoStageExecutor:
                             doc_short_id=result.doc_short_id,
                             response_length=len(result.response_text),
                             references_count=len(result.references_map),
-                            response_preview=result.response_text[:1000]  # 打印前1000字符
+                            elapsed_seconds=round(doc_elapsed, 2),
+                            response_preview=result.response_text[:1000]
                         )
 
                         # 详细打印Stage 1的返回内容（用于debug）
@@ -285,19 +312,91 @@ class TwoStageExecutor:
                             doc_id=doc_id,
                             doc_name=result.doc_name,
                             doc_short_id=result.doc_short_id,
-                            response_text=result.response_text,  # 完整内容
-                            references_map=result.references_map  # 完整引用映射
+                            response_text=result.response_text,
+                            references_map=result.references_map
                         )
 
-                except Exception as e:
-                    logger.error(
-                        "document_stage1_failed",
-                        doc_id=doc_id,
-                        error=str(e),
-                        exc_info=True
-                    )
-                    # 继续处理其他文档
-                    continue
+                        return result
+
+                    except Exception as e:
+                        # 重试3次后仍失败
+                        failed_count += 1
+                        completed_count += 1
+                        await event_queue.put({
+                            "type": "progress",
+                            "data": {
+                                "completed": completed_count,
+                                "total": total_count,
+                                "doc_name": doc_name,
+                                "status": "failed",
+                                "error": str(e)
+                            }
+                        })
+
+                        logger.error(
+                            "document_processing_failed_after_retries",
+                            doc_id=doc_id,
+                            doc_name=doc_name,
+                            error=str(e),
+                            exc_info=True
+                        )
+                        return None  # 返回None标记失败
+
+            # 创建所有任务
+            tasks = [
+                process_with_limit_and_progress(doc_id, doc_name)
+                for doc_id, doc_name in valid_documents
+            ]
+
+            # 启动全局心跳任务
+            heartbeat_handle = asyncio.create_task(
+                self._global_heartbeat_task(stop_heartbeat, event_queue, "Stage 1")
+            )
+
+            # 并发执行所有任务
+            async def execute_all_tasks():
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                await event_queue.put(None)  # 结束信号
+                return results
+
+            execution_handle = asyncio.create_task(execute_all_tasks())
+
+            # 实时消费进度事件并yield
+            while True:
+                event = await event_queue.get()
+                if event is None:
+                    break
+                yield event
+
+            # 等待所有任务完成
+            results = await execution_handle
+
+            # 停止心跳
+            stop_heartbeat.set()
+            try:
+                await asyncio.wait_for(heartbeat_handle, timeout=1.0)
+            except asyncio.TimeoutError:
+                heartbeat_handle.cancel()
+
+            # 过滤失败的结果
+            stage1_results = [
+                r for r in results
+                if r is not None and not isinstance(r, Exception)
+            ]
+
+            # 计算Stage 1总耗时
+            stage1_elapsed = asyncio.get_event_loop().time() - stage1_start_time
+
+            logger.info(
+                "stage1_parallel_completed",
+                total_documents=total_count,
+                successful_documents=len(stage1_results),
+                failed_documents=failed_count,
+                success_rate=f"{len(stage1_results)}/{total_count}",
+                total_elapsed_seconds=round(stage1_elapsed, 2),
+                avg_elapsed_per_doc=round(stage1_elapsed / total_count, 2) if total_count > 0 else 0,
+                concurrency=settings.stage1_concurrency
+            )
 
             # 检查是否有成功处理的文档
             if not stage1_results:
@@ -332,8 +431,6 @@ class TwoStageExecutor:
             # 1. 避免Bedrock同步API超时（300秒限制）
             # 2. 需要等待完整响应后进行后处理（表格格式化、图片路径转换）
             # 3. 在等待期间发送心跳防止SSE连接超时
-            import asyncio
-
             markdown_response = ""
             last_heartbeat_time = asyncio.get_event_loop().time()
             heartbeat_interval = 10.0  # 10秒心跳间隔
@@ -416,93 +513,78 @@ class TwoStageExecutor:
                 "data": {"message": str(e)}
             }
 
-    async def _process_single_document_with_heartbeat(
+    async def _process_single_document_with_retry(
         self,
         query: str,
-        document_id: str,
-        doc_name: str,
-        current_idx: int,
-        total_docs: int
-    ):
+        document_id: str
+    ) -> Stage1Result:
         """
-        处理单个文档并发送心跳（Stage 1）
-
-        在等待Bedrock响应期间每10秒发送一次心跳，防止SSE连接超时
+        带重试机制的文档处理（重试3次）
 
         Args:
             query: 用户问题
             document_id: 文档ID
-            doc_name: 文档名称
-            current_idx: 当前文档索引
-            total_docs: 总文档数
 
-        Yields:
-            心跳事件或结果事件
+        Returns:
+            Stage1Result对象
+
+        Raises:
+            Exception: 重试3次后仍失败
         """
-        import asyncio
-        from asyncio import Queue
+        from tenacity import (
+            retry,
+            stop_after_attempt,
+            wait_exponential,
+            retry_if_exception_type,
+            before_sleep_log
+        )
+        import botocore.exceptions
 
-        # 创建事件队列
-        event_queue: Queue = Queue()
-        stop_heartbeat = asyncio.Event()
+        @retry(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=2, min=4, max=60),
+            retry=retry_if_exception_type((
+                botocore.exceptions.ClientError,
+                Exception
+            )),
+            before_sleep=before_sleep_log(logger, "WARNING"),
+            reraise=True
+        )
+        async def _process_with_retry():
+            logger.info(
+                "processing_document_attempt",
+                document_id=document_id
+            )
+            return await self._process_single_document(query, document_id)
 
-        # 心跳任务
-        async def heartbeat_task():
-            heartbeat_count = 0
-            while not stop_heartbeat.is_set():
-                try:
-                    await asyncio.wait_for(stop_heartbeat.wait(), timeout=10.0)
-                    break
-                except asyncio.TimeoutError:
-                    # 10秒超时，发送心跳
-                    heartbeat_count += 1
-                    await event_queue.put({
-                        "type": "heartbeat",
-                        "message": f"正在分析文档 {current_idx}/{total_docs}: {doc_name}... ({heartbeat_count})"
-                    })
+        return await _process_with_retry()
 
-        # 文档处理任务
-        async def process_task():
+    async def _global_heartbeat_task(
+        self,
+        stop_event: asyncio.Event,
+        event_queue: asyncio.Queue,
+        stage_name: str = "Stage 1"
+    ):
+        """
+        全局心跳任务，每10秒发送一次
+
+        Args:
+            stop_event: 停止信号
+            event_queue: 事件队列
+            stage_name: 阶段名称
+        """
+        heartbeat_count = 0
+        while not stop_event.is_set():
             try:
-                result = await self._process_single_document(query, document_id)
-                await event_queue.put({
-                    "type": "result",
-                    "data": result
-                })
-            except Exception as e:
-                logger.error(
-                    "process_single_document_failed",
-                    document_id=document_id,
-                    error=str(e),
-                    exc_info=True
-                )
-                await event_queue.put({
-                    "type": "result",
-                    "data": None
-                })
-            finally:
-                stop_heartbeat.set()
-                await event_queue.put(None)  # 结束信号
-
-        # 并发运行
-        heartbeat_handle = asyncio.create_task(heartbeat_task())
-        process_handle = asyncio.create_task(process_task())
-
-        # 从队列中读取事件并yield
-        while True:
-            event = await event_queue.get()
-            if event is None:
+                await asyncio.wait_for(stop_event.wait(), timeout=10.0)
                 break
-            yield event
-
-        # 清理任务
-        stop_heartbeat.set()
-        try:
-            await asyncio.wait_for(heartbeat_handle, timeout=1.0)
-        except asyncio.TimeoutError:
-            heartbeat_handle.cancel()
-
-        await process_handle
+            except asyncio.TimeoutError:
+                # 10秒超时，发送心跳
+                heartbeat_count += 1
+                await event_queue.put({
+                    "type": "heartbeat",
+                    "message": f"{stage_name}处理中... ({heartbeat_count})"
+                })
 
     async def _process_single_document(
         self,
@@ -605,7 +687,6 @@ class TwoStageExecutor:
 
         try:
             # 调用Bedrock converse API（设置300秒超时）
-            import asyncio
             response = await asyncio.wait_for(
                 asyncio.to_thread(
                     self._invoke_bedrock_sync,
@@ -719,7 +800,6 @@ class TwoStageExecutor:
             生成的文本片段
         """
         from app.core.config import settings
-        import asyncio
 
         # 1. 构建Stage 2 Prompt
         prompt = self._build_stage2_prompt(query, stage1_results)
@@ -832,7 +912,6 @@ class TwoStageExecutor:
 
         try:
             # 使用同步API获取完整响应（设置300秒超时，Stage 2可能需要更长时间）
-            import asyncio
             response = await asyncio.wait_for(
                 asyncio.to_thread(
                     self._invoke_bedrock_sync,

@@ -219,7 +219,7 @@
   GENERATION_MODEL_ID=global.anthropic.claude-sonnet-4-5-20250929-v1:0
 
   # 数据库配置
-  DATABASE_PATH=/data/aks-prd.db
+  DATABASE_PATH=/data/ask-prd.db
 
   # 缓存配置
   CACHE_DIR=/data/cache

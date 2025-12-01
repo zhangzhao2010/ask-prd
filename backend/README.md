@@ -7,7 +7,7 @@
 - Python 3.12
 - FastAPI
 - SQLAlchemy + SQLite
-- Strands Agents SDK
+- 原生Bedrock API (boto3)
 - AWS Bedrock / S3 / OpenSearch
 
 ## 快速开始
@@ -68,7 +68,7 @@ backend/
 │   │       └── query/            # 检索问答
 │   ├── models/          # SQLAlchemy模型
 │   ├── services/        # 业务逻辑层
-│   ├── agents/          # Strands Agent实现
+│   │   └── agentic_robot/  # Two-Stage执行器
 │   ├── utils/           # 工具函数
 │   ├── core/            # 核心配置
 │   │   ├── config.py    # 配置管理
@@ -80,7 +80,7 @@ backend/
 │   └── init_db.py       # 数据库初始化
 ├── tests/               # 测试代码
 ├── data/                # 数据目录（自动创建）
-│   ├── aks-prd.db       # SQLite数据库
+│   ├── ask-prd.db       # SQLite数据库
 │   └── cache/           # 文件缓存
 ├── requirements.txt     # Python依赖
 ├── .env.example         # 环境变量模板
@@ -168,7 +168,7 @@ GENERATION_MODEL_ID=global.anthropic.claude-sonnet-4-5-20250929-v1:0
 EMBEDDING_MODEL_ID=amazon.titan-embed-text-v2:0
 
 # 数据库
-DATABASE_PATH=./data/aks-prd.db
+DATABASE_PATH=./data/ask-prd.db
 
 # 缓存
 CACHE_DIR=./data/cache
@@ -199,7 +199,7 @@ LOG_LEVEL=INFO
 
 - [x] S3客户端（上传/下载/删除）
 - [x] OpenSearch客户端（索引/搜索/混合检索）
-- [x] Bedrock客户端（Strands集成/Embedding）
+- [x] Bedrock客户端（Embedding生成）
 
 ### ✅ Phase 3: 知识库管理 (已完成)
 
@@ -216,20 +216,14 @@ LOG_LEVEL=INFO
 - [x] S3集成和文件管理
 - [x] API测试验证
 
-### 🚧 Phase 5: PDF转换服务 (进行中)
+### ✅ Phase 5-10: 已完成
 
-- [ ] Marker集成
-- [ ] PDF转Markdown转换
-- [ ] 图片提取和上传
-- [ ] 转换Service实现
-
-### 📋 Phase 6-10: 待实现
-
-- Phase 6: 文本处理（Chunking & Embedding）
-- Phase 7: 同步任务系统
-- Phase 8: Agent实现（Sub-Agent & Main-Agent）
-- Phase 9: 查询/搜索API
-- Phase 10: 测试和优化
+- [x] PDF转换服务（Marker集成）
+- [x] 文本处理（Chunking & Embedding）
+- [x] 同步任务系统
+- [x] Two-Stage问答（原生Bedrock API）
+- [x] 查询/搜索API（Hybrid Search + SSE）
+- [x] 测试和优化
 
 详细开发进度请查看 [DEVELOPMENT.md](./DEVELOPMENT.md)
 

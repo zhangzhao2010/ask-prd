@@ -223,7 +223,10 @@ function QueryPageContent() {
               } else if (data.type === 'progress') {
                 // Two-Stage系统的进度事件
                 const progressData = (data as any).data;
-                setStatus(`正在处理文档 ${progressData.current}/${progressData.total}: ${progressData.doc_name}`);
+                const statusText = progressData.status === 'failed'
+                  ? `已完成 ${progressData.completed}/${progressData.total} 个文档（失败: ${progressData.doc_name}）`
+                  : `已完成 ${progressData.completed}/${progressData.total} 个文档: ${progressData.doc_name}`;
+                setStatus(statusText);
               } else if (data.type === 'retrieved_documents') {
                 // Two-Stage系统的文档检索事件
                 const docData = (data as any);

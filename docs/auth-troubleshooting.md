@@ -517,7 +517,7 @@ def sanitize_log(message):
 curl http://localhost:8000/health
 
 # 2. 检查数据库
-sqlite3 data/aks-prd.db "SELECT * FROM users;"
+sqlite3 data/ask-prd.db "SELECT * FROM users;"
 
 # 3. 检查日志
 tail -f logs/app.log
@@ -533,16 +533,16 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
 
 ```bash
 # 查看所有表
-sqlite3 data/aks-prd.db ".tables"
+sqlite3 data/ask-prd.db ".tables"
 
 # 查看用户
-sqlite3 data/aks-prd.db "SELECT id, username, role, is_active FROM users;"
+sqlite3 data/ask-prd.db "SELECT id, username, role, is_active FROM users;"
 
 # 查看知识库
-sqlite3 data/aks-prd.db "SELECT id, name, visibility, owner_id FROM knowledge_bases;"
+sqlite3 data/ask-prd.db "SELECT id, name, visibility, owner_id FROM knowledge_bases;"
 
 # 查看权限
-sqlite3 data/aks-prd.db "SELECT * FROM knowledge_base_permissions;"
+sqlite3 data/ask-prd.db "SELECT * FROM knowledge_base_permissions;"
 ```
 
 ### Token诊断

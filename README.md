@@ -43,17 +43,17 @@ ASK-PRD 是一个为产品经理打造的智能文档检索和问答系统。通
 - Python 3.12
 - FastAPI
 - SQLAlchemy
-- Strands Agents SDK（Multi-Agent框架）
+- 原生Bedrock API（Two-Stage问答架构）
 
 **基础设施**
 - AWS EC2（带GPU）
 - Amazon S3（对象存储）
 - Amazon OpenSearch Serverless（向量数据库）
-- AWS Bedrock（AI服务，通过Strands集成）
+- AWS Bedrock（AI服务）
 - SQLite（元数据库）
 
 **核心依赖**
-- strands-agents（Agent框架）
+- boto3（AWS SDK，直接调用Bedrock API）
 - marker（PDF转Markdown）
 - langchain（文本处理）
 
@@ -93,12 +93,12 @@ ask-prd/
 │   ├── api-query.md            # 问答API
 │   ├── api-utilities.md        # 工具API
 │   └── error-handling.md       # 错误处理
-├── backend/                    # 后端代码（待创建）
+├── backend/                    # 后端代码
 │   ├── app/
 │   │   ├── api/               # API接口
 │   │   ├── models/            # 数据模型
 │   │   ├── services/          # 业务逻辑
-│   │   ├── agents/            # Agent实现
+│   │   │   └── agentic_robot/  # Two-Stage执行器
 │   │   └── utils/             # 工具函数
 │   ├── tests/                 # 测试代码
 │   ├── requirements.txt       # Python依赖
@@ -336,7 +336,7 @@ EMBEDDING_MODEL_ID=amazon.titan-embed-text-v2:0
 GENERATION_MODEL_ID=global.anthropic.claude-sonnet-4-5-20250929-v1:0
 
 # 数据库配置
-DATABASE_PATH=/data/aks-prd.db
+DATABASE_PATH=./data/ask-prd.db
 
 # 缓存配置
 CACHE_DIR=/data/cache

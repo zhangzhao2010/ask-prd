@@ -175,7 +175,7 @@ pip install -r requirements.txt
 **解决**: 数据库已配置WAL模式，通常不会出现此问题。如果仍然出现：
 ```bash
 # 删除旧数据库重新初始化
-rm data/aks-prd.db*
+rm data/ask-prd.db*
 python scripts/init_db.py
 ```
 

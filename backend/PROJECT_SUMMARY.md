@@ -51,12 +51,12 @@
 - ✅ 错误处理和重试
 - ✅ 临时文件清理
 
-### 7. Multi-Agent智能问答
-- ✅ Sub-Agent（文档深度阅读）
-- ✅ Main-Agent（结果综合）
-- ✅ Strands框架集成
-- ✅ Agent工具系统（@tool装饰器）
-- ✅ 并发控制（Semaphore）
+### 7. Two-Stage智能问答
+- ✅ Stage 1：文档深度阅读（串行处理）
+- ✅ Stage 2：答案综合生成（流式输出）
+- ✅ 原生Bedrock API（Converse + Converse Stream）
+- ✅ 手动Orchestration（asyncio + 心跳机制）
+- ✅ 多模态支持（文本 + 图片）
 
 ### 8. 智能检索和问答
 - ✅ Hybrid Search（向量 + BM25 + RRF）
@@ -71,7 +71,7 @@
 ```
 - Python: 3.12
 - Web框架: FastAPI 0.121.0
-- Agent框架: Strands Agents 1.14.0
+- AI实现: 原生Bedrock API (boto3)
 - 数据库: SQLite (WAL模式)
 - ORM: SQLAlchemy 2.0.44
 - 日志: structlog 25.5.0
@@ -219,7 +219,7 @@ backend/
 │   ├── test_*.py                  # 各模块测试
 │   └── test_query_system.py      # 完整系统测试
 ├── data/
-│   ├── aks-prd.db                 # SQLite数据库
+│   ├── ask-prd.db                 # SQLite数据库
 │   └── cache/                     # 本地缓存
 ├── requirements.txt               # 依赖列表
 ├── .env                           # 环境配置
@@ -234,7 +234,7 @@ backend/
 - **总代码量**: ~8000+ 行
 - **Service层**: ~2500 行
 - **API层**: ~800 行
-- **Agent层**: ~550 行
+- **Two-Stage执行器**: ~1300 行
 - **Utils层**: ~1200 行
 - **Models层**: ~600 行
 
@@ -247,8 +247,7 @@ backend/
 | embedding_service.py | 340 | 向量化 |
 | sync_worker.py | 330 | 同步Worker |
 | task_service.py | 290 | 任务管理 |
-| sub_agent.py | 230 | Sub-Agent |
-| main_agent.py | 220 | Main-Agent |
+| two_stage_executor.py | 1300 | Two-Stage执行器 |
 | opensearch_client.py | 400 | OpenSearch客户端 |
 | bedrock_client.py | 300 | Bedrock客户端 |
 
@@ -261,8 +260,8 @@ backend/
 - 与文本chunk在同一向量空间
 - 支持图片独立检索
 
-### 2. Multi-Agent架构
-**决策**: 使用Sub-Agent + Main-Agent模式
+### 2. Two-Stage架构
+**决策**: 使用Stage 1（文档理解）+ Stage 2（答案综合）模式
 **理由**:
 - 单个chunk信息不完整
 - 需要阅读整个文档才能准确回答
@@ -283,11 +282,13 @@ backend/
 - 支持多实例部署
 - 灾难恢复能力
 
-### 5. Strands框架
-**决策**: 使用Strands Agents SDK
+### 5. 原生Bedrock API
+**决策**: 直接使用boto3调用Bedrock API，而非Strands Agent框架
 **理由**:
-- AWS官方Agent框架
-- 与Bedrock深度集成
+- 更灵活的控制流程
+- 自定义心跳和超时处理
+- 避免框架抽象带来的复杂性
+- 直接访问Converse和Converse Stream API
 - 简化Agent开发
 - 自动Metrics收集
 

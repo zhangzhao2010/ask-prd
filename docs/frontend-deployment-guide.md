@@ -276,7 +276,7 @@ npm run dev
 lsof -i :8000
 
 # 检查数据库
-ls -la /home/ubuntu/ask-prd/backend/data/aks-prd.db
+ls -la /home/ubuntu/ask-prd/backend/data/ask-prd.db
 
 # 重新初始化
 python scripts/migrate_add_users_and_permissions.py --yes

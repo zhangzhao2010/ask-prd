@@ -48,6 +48,7 @@ class Settings(BaseSettings):
 
     # 查询配置
     max_retrieval_docs: int = 20  # 检索的最大文档数
+    stage1_concurrency: int = 5  # Stage 1文档处理的最大并发数
 
     # Marker配置
     marker_use_gpu: bool = True

@@ -482,7 +482,7 @@ def delete_documents(kb_id: str, document_ids: List[str]):
 **SQLite备份**：
 ```bash
 # 每日备份脚本
-sqlite3 /data/aks-prd.db ".backup '/data/backups/aks-prd-$(date +%Y%m%d).db'"
+sqlite3 /data/ask-prd.db ".backup '/data/backups/aks-prd-$(date +%Y%m%d).db'"
 
 # 保留最近7天的备份
 find /data/backups -name "aks-prd-*.db" -mtime +7 -delete
@@ -540,7 +540,7 @@ db.execute("PRAGMA journal_mode=WAL")
 **迁移脚本示例**：
 ```python
 def migrate_to_rds():
-    sqlite_conn = sqlite3.connect('/data/aks-prd.db')
+    sqlite_conn = sqlite3.connect('/data/ask-prd.db')
     pg_conn = psycopg2.connect(RDS_CONNECTION_STRING)
 
     # 迁移表结构（需调整SQLite特有语法）
@@ -599,7 +599,7 @@ GROUP BY kb.id;
 import sqlite3
 
 conn = sqlite3.connect(
-    '/data/aks-prd.db',
+    '/data/ask-prd.db',
     check_same_thread=False,  # 允许多线程
     timeout=30.0              # 锁超时30秒
 )
