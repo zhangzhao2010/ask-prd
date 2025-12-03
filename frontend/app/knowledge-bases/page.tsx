@@ -16,6 +16,7 @@ import {
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { PermissionManager } from '@/components/knowledge-base/PermissionManager';
 import { authService } from '@/services/auth';
+import { knowledgeBaseAPI } from '@/services/api';
 import CreateKnowledgeBaseModal from '@/components/knowledge-base/CreateKnowledgeBaseModal';
 
 interface KnowledgeBase {
@@ -53,17 +54,7 @@ function KnowledgeBasesContent() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/v1/knowledge-bases', {
-        headers: {
-          Authorization: `Bearer ${authService.getToken()}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('加载失败');
-      }
-
-      const data = await response.json();
+      const data = await knowledgeBaseAPI.list();
       setKnowledgeBases(data.items);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载知识库列表失败');
@@ -83,14 +74,7 @@ function KnowledgeBasesContent() {
     setDeleteLoading(true);
     try {
       await Promise.all(
-        selectedItems.map((item) =>
-          fetch(`/api/v1/knowledge-bases/${item.id}`, {
-            method: 'DELETE',
-            headers: {
-              Authorization: `Bearer ${authService.getToken()}`,
-            },
-          })
-        )
+        selectedItems.map((item) => knowledgeBaseAPI.delete(item.id))
       );
       setSuccess(`已删除 ${selectedItems.length} 个知识库`);
       setDeleteModalVisible(false);

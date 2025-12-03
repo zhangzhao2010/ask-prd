@@ -78,7 +78,7 @@ export default function LoginPage() {
             <Button
               variant="primary"
               loading={loading}
-              onClick={handleSubmit}
+              formAction="submit"
               fullWidth
             >
               登录

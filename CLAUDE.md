@@ -160,7 +160,7 @@ pip install -r requirements.txt
 cp .env.example .env  # 如果有example文件
 vim .env  # 或用其他编辑器修改
 
-# 4. 数据库初始化
+# 4. 数据库初始化（会自动创建默认管理员账户 admin/admin123）
 python scripts/init_db.py
 
 # 5. 启动后端服务
@@ -183,7 +183,7 @@ npm run dev
 cd backend
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 数据库初始化
+# 数据库初始化（会自动创建默认管理员账户 admin/admin123）
 python scripts/init_db.py
 
 # 运行开发服务器（推荐方式）

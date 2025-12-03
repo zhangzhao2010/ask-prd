@@ -233,6 +233,47 @@ export interface ErrorEvent extends StreamEvent {
   details?: Record<string, any>;
 }
 
+export interface HeartbeatEvent extends StreamEvent {
+  type: 'heartbeat';
+  message?: string;
+}
+
+export interface AnswerDeltaEvent extends StreamEvent {
+  type: 'answer_delta';
+  data: {
+    text: string;
+  };
+}
+
+export interface AnswerCompleteEvent extends StreamEvent {
+  type: 'answer_complete';
+  data: {
+    text: string;
+  };
+}
+
+export interface ProgressEvent extends StreamEvent {
+  type: 'progress';
+  data: {
+    completed: number;
+    total: number;
+    doc_name: string;
+    status: 'success' | 'failed';
+  };
+}
+
+export interface ReferencesEvent extends StreamEvent {
+  type: 'references';
+  data: Array<{
+    ref_id: string;
+    chunk_type: 'text' | 'image';
+    doc_id: string;
+    doc_name: string;
+    content?: string;
+    image_url?: string;
+  }>;
+}
+
 export type QueryStreamEvent =
   | StatusEvent
   | RetrievedDocumentsEvent
@@ -240,4 +281,9 @@ export type QueryStreamEvent =
   | CitationEvent
   | TokensEvent
   | DoneEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | HeartbeatEvent
+  | AnswerDeltaEvent
+  | AnswerCompleteEvent
+  | ProgressEvent
+  | ReferencesEvent;

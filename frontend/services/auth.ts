@@ -21,12 +21,13 @@ export interface LoginResponse {
 class AuthService {
   private readonly TOKEN_KEY = 'access_token';
   private readonly USER_KEY = 'user_info';
+  private readonly baseURL = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
   /**
    * 用户登录
    */
   async login(username: string, password: string): Promise<LoginResponse> {
-    const response = await fetch('/api/v1/auth/login', {
+    const response = await fetch(`${this.baseURL}/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

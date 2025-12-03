@@ -373,7 +373,10 @@ function QueryPageContent() {
             <ReactMarkdown
               components={{
                 img: ({ node, ...props }) => (
-                  <AuthenticatedImage src={props.src} alt={props.alt} />
+                  <AuthenticatedImage
+                    src={typeof props.src === 'string' ? props.src : undefined}
+                    alt={typeof props.alt === 'string' ? props.alt : undefined}
+                  />
                 ),
               }}
             >
@@ -425,7 +428,10 @@ function QueryPageContent() {
                         <ReactMarkdown
                           components={{
                             img: ({ node, ...props }) => (
-                              <AuthenticatedImage src={props.src} alt={props.alt} />
+                              <AuthenticatedImage
+                                src={typeof props.src === 'string' ? props.src : undefined}
+                                alt={typeof props.alt === 'string' ? props.alt : undefined}
+                              />
                             ),
                           }}
                         >

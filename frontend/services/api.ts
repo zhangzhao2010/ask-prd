@@ -10,7 +10,7 @@ interface RequestOptions extends RequestInit {
 }
 
 class ApiClient {
-  private readonly baseURL = '/api/v1';
+  private readonly baseURL = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
   /**
    * 通用请求方法
@@ -22,8 +22,8 @@ class ApiClient {
     const { requireAuth = true, ...fetchOptions } = options;
 
     // 构建请求头
-    const headers: HeadersInit = {
-      ...fetchOptions.headers,
+    const headers: Record<string, string> = {
+      ...(fetchOptions.headers as Record<string, string>),
     };
 
     // 添加认证Token
@@ -86,14 +86,14 @@ class ApiClient {
       headers: isFormData
         ? options?.headers  // FormData: 不设置Content-Type
         : {
-            'Content-Type': 'application/json',
-            ...options?.headers,
-          },
+          'Content-Type': 'application/json',
+          ...options?.headers,
+        },
       body: isFormData
         ? data  // FormData: 直接传递
         : data
-        ? JSON.stringify(data)  // 其他: JSON序列化
-        : undefined,
+          ? JSON.stringify(data)  // 其他: JSON序列化
+          : undefined,
     });
   }
 
@@ -309,7 +309,8 @@ export const queryAPI = {
     params.append('query', queryText);
 
     // 发起流式请求
-    const response = await fetch(`/api/v1/query/stream?${params}`, {
+    const baseURL = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+    const response = await fetch(`${baseURL}/query/stream?${params}`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
