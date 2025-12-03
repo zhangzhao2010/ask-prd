@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
 
+    # S3配置
+    s3_bucket: str
+
     # OpenSearch配置
     opensearch_endpoint: str
 
