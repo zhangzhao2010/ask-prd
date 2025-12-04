@@ -29,7 +29,8 @@ ASK-PRD 是一个基于PRD文档的智能检索问答系统（Demo项目），�
    - PDF通过marker转换为Markdown + 图片
    - 使用Bedrock Claude Vision API理解图片内容并生成描述
    - 文本和图片都作为独立的chunk向量化
-   - 数据存储：SQLite（元数据）+ S3（文件）+ OpenSearch（向量）
+   - 数据存储：SQLite（元数据）+ 本地文件系统（文件）+ OpenSearch（向量）
+   - 注：S3Client已实现但暂未使用，预留作为文件系统备份方案
 
 2. **Agentic Robot（智能问答 - Two-Stage架构）**
    - Hybrid Search：向量检索（kNN）+ BM25关键词检索，使用RRF合并
@@ -55,15 +56,14 @@ ASK-PRD 是一个基于PRD文档的智能检索问答系统（Demo项目），�
 
 3. **SQLite而非RDS**：Demo阶段使用SQLite简化部署，但预留了迁移到RDS的路径（需要时修改Schema中的SQLite特有语法）
 
-4. **本地文件缓存策略**：
-   - **S3是唯一真实数据源**：所有Marker转换结果（Markdown+图片）必须上传S3持久化
-   - **本地缓存加速访问**：从S3下载后缓存到`/data/cache/`，使用LRU策略，可以安全清理
-   - **文件获取逻辑**：先检查本地缓存 → 不存在则从S3下载 → 下载后更新本地缓存
-   - **为什么必须上传S3**：
-     - 避免重复运行Marker（很耗时且需要GPU）
-     - 本地缓存可能清理或丢失，S3保证数据持久化
-     - 支持将来多实例部署（共享S3数据）
-     - 灾难恢复能力
+4. **本地文件存储策略**：
+   - **当前实现**：文件直接存储在本地文件系统（`./data/documents/`）
+   - **存储内容**：原始PDF、Marker转换的Markdown和图片
+   - **路径结构**：
+     - PDF: `./data/documents/pdfs/{doc_id}.pdf`
+     - Markdown缓存: `/data/cache/documents/{document_id}/content.md`
+     - 图片缓存: `/data/cache/documents/{document_id}/images/`
+   - **S3备份（预留）**：S3Client已实现但未启用，可作为文件系统备份方案
 
 ## Bedrock API使用要点
 
@@ -398,39 +398,108 @@ frontend/
 - Sub-Agent并发数建议限制为5，避免触发限流
 - Embedding API支持批量调用（batch_size=25），减少调用次数
 
-### 文件缓存管理
+### AWS跨账号配置
 
-**S3路径规划**：
+**应用场景**：当OpenSearch和Bedrock不在同一AWS账号时，需要配置跨账号访问。
+
+**典型场景**：
+- OpenSearch部署在账号A（应用所在账号）
+- Bedrock统一由账号B管理（公司统一Bedrock账号）
+
+**配置方法（使用Access Key）**：
+
+1. **在Bedrock账号（账号B）创建IAM User**
+   ```bash
+   # 创建专用IAM User
+   aws iam create-user --user-name ask-prd-bedrock-user
+
+   # 附加Bedrock权限策略
+   cat > bedrock-policy.json <<'EOF'
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": [
+           "bedrock:InvokeModel",
+           "bedrock:InvokeModelWithResponseStream"
+         ],
+         "Resource": [
+           "arn:aws:bedrock:us-west-2::foundation-model/global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+           "arn:aws:bedrock:us-west-2::foundation-model/amazon.titan-embed-text-v2:0"
+         ]
+       }
+     ]
+   }
+   EOF
+
+   aws iam put-user-policy \
+     --user-name ask-prd-bedrock-user \
+     --policy-name BedrockInvokePolicy \
+     --policy-document file://bedrock-policy.json
+
+   # 创建Access Key
+   aws iam create-access-key --user-name ask-prd-bedrock-user
+   # 记录返回的 AccessKeyId 和 SecretAccessKey
+   ```
+
+2. **在应用的.env文件中配置**
+   ```bash
+   # Bedrock跨账号配置
+   BEDROCK_AWS_ACCESS_KEY_ID=AKIAXXXXXXXXXXXXXXXX      # 步骤1创建的AccessKeyId
+   BEDROCK_AWS_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxx # 步骤1创建的SecretAccessKey
+   ```
+
+3. **凭证优先级逻辑**
+   - 如果配置了 `BEDROCK_AWS_ACCESS_KEY_ID`，使用Bedrock专用凭证（跨账号）
+   - 否则，如果配置了 `AWS_ACCESS_KEY_ID`，使用通用AWS凭证
+   - 否则，使用EC2 IAM Instance Profile（默认凭证）
+
+**支持的部署场景**：
+
+| 场景 | OpenSearch凭证 | Bedrock凭证 | 配置方法 |
+|------|---------------|-------------|---------|
+| 同账号部署 | IAM Role | IAM Role | 不配置任何AK/SK，使用EC2 IAM Role |
+| Bedrock跨账号 | IAM Role | AK/SK | 只配置 `BEDROCK_AWS_ACCESS_KEY_ID` |
+| 全部跨账号 | AK/SK | AK/SK | 配置 `AWS_ACCESS_KEY_ID` + `BEDROCK_AWS_ACCESS_KEY_ID` |
+
+**安全建议**：
+- Access Key仅授予最小必要权限（只能调用Bedrock模型）
+- 定期轮换Access Key（建议90天一次）
+- 生产环境考虑使用STS AssumeRole代替长期Access Key
+
+### 文件存储管理
+
+**当前存储方式**：本地文件系统
+
+**文件路径结构**：
 ```
-s3://bucket/prds/product-a/           # S3 prefix (知识库配置)
-├── doc.pdf                           # 原始PDF
-└── converted/                        # 转换结果目录
-    └── doc-{uuid}/                   # 按document_id组织
-        ├── content.md                # Markdown文件
-        └── images/                   # 图片目录
+./data/documents/
+├── pdfs/                             # 原始PDF存储
+│   └── {doc_id}.pdf
+└── cache/                            # 转换结果缓存
+    └── documents/{document_id}/
+        ├── content.md                # Marker转换的Markdown
+        └── images/                   # 提取的图片
             ├── img_001.png
             └── img_002.png
 ```
 
-**本地缓存路径**：
-```
-/data/cache/documents/{document_id}/
-├── content.md                        # Markdown缓存
-└── images/                           # 图片缓存
-    ├── img_001.png
-    └── img_002.png
-```
-
-**文件获取策略**：
-- 检查逻辑：SQLite记录路径 → 检查本地文件存在 → 不存在则从S3下载 → 更新本地缓存
-- LRU策略：保留最近使用的1000个文档，超出则清理
-- **关键**：本地缓存丢失不影响系统运行，会自动从S3恢复
+**文件管理策略**：
+- PDF上传后保存到 `./data/documents/pdfs/`
+- Marker转换结果缓存到 `./data/cache/documents/`
+- LRU缓存清理策略（保留最近使用的1000个文档）
 
 **删除文档时的清理顺序**：
 1. 从OpenSearch删除向量
 2. 从SQLite删除元数据
-3. 从S3删除原始PDF和转换结果（`s3://bucket/prds/.../doc.pdf` 和 `s3://bucket/prds/.../converted/doc-xxx/`）
-4. 从本地删除缓存（`/data/cache/documents/doc-xxx/`）
+3. 从本地删除PDF文件（`./data/documents/pdfs/{doc_id}.pdf`）
+4. 从本地删除缓存（`./data/cache/documents/{doc_id}/`）
+
+**S3备份（预留功能）**：
+- S3Client已实现但未启用
+- 可作为文件系统备份或多实例共享数据方案
+- 启用后路径规划：`s3://{bucket}/prds/{kb_name}/converted/{doc_id}/`
 
 ### 数据一致性
 
@@ -549,6 +618,12 @@ OPENSEARCH_ENDPOINT=https://your-endpoint.us-west-2.aoss.amazonaws.com  # 替换
 BEDROCK_REGION=us-west-2
 EMBEDDING_MODEL_ID=amazon.titan-embed-text-v2:0
 GENERATION_MODEL_ID=global.anthropic.claude-sonnet-4-5-20250929-v1:0
+
+# Bedrock跨账号配置（可选）
+# 如果Bedrock在不同账号，配置专用的AK/SK
+# 如果不配置，将使用AWS_ACCESS_KEY_ID或EC2 IAM Role
+# BEDROCK_AWS_ACCESS_KEY_ID=AKIAXXXXXXXXXXXXXXXX
+# BEDROCK_AWS_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # 数据库配置
 DATABASE_PATH=./data/ask-prd.db

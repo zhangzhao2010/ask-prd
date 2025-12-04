@@ -18,10 +18,40 @@ class BedrockClient:
     def __init__(self):
         """初始化Bedrock客户端"""
         try:
+            # 灵活的凭证选择逻辑
+            # 优先级：Bedrock专用AK/SK > 通用AK/SK > EC2 IAM Role
+            if settings.bedrock_aws_access_key_id:
+                # 场景1：使用Bedrock专用凭证（跨账号访问）
+                aws_access_key_id = settings.bedrock_aws_access_key_id
+                aws_secret_access_key = settings.bedrock_aws_secret_access_key
+                credential_source = "bedrock_dedicated"
+                logger.info(
+                    "bedrock_using_dedicated_credentials",
+                    message="使用Bedrock专用凭证（跨账号）"
+                )
+            elif settings.aws_access_key_id:
+                # 场景2：使用通用AWS凭证
+                aws_access_key_id = settings.aws_access_key_id
+                aws_secret_access_key = settings.aws_secret_access_key
+                credential_source = "common_credentials"
+                logger.info(
+                    "bedrock_using_common_credentials",
+                    message="使用通用AWS凭证"
+                )
+            else:
+                # 场景3：使用默认凭证（EC2 IAM Role）
+                aws_access_key_id = None
+                aws_secret_access_key = None
+                credential_source = "iam_role"
+                logger.info(
+                    "bedrock_using_default_credentials",
+                    message="使用默认凭证（EC2 IAM Role）"
+                )
+
             # 创建boto session
             self.boto_session = boto3.Session(
-                aws_access_key_id=settings.aws_access_key_id,
-                aws_secret_access_key=settings.aws_secret_access_key,
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
                 region_name=settings.bedrock_region
             )
 
@@ -35,7 +65,8 @@ class BedrockClient:
                 "bedrock_client_initialized",
                 region=settings.bedrock_region,
                 generation_model=settings.generation_model_id,
-                embedding_model=settings.embedding_model_id
+                embedding_model=settings.embedding_model_id,
+                credential_source=credential_source
             )
 
         except Exception as e:
