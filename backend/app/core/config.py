@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     embedding_model_id: str = "amazon.titan-embed-text-v2:0"
     generation_model_id: str = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
+    # Bedrock跨账号配置（可选）
+    # 如果配置了这两个字段，Bedrock将使用专用凭证（跨账号访问）
+    # 如果不配置，将使用aws_access_key_id/aws_secret_access_key或EC2 IAM Role
+    bedrock_aws_access_key_id: Optional[str] = None
+    bedrock_aws_secret_access_key: Optional[str] = None
+
     # 本地存储配置
     data_dir: str = "./data"
 
